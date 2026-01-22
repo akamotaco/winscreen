@@ -802,9 +802,6 @@ class ScreenClient
         {
             try
             {
-                // DEBUG: readTask 시작 확인
-                Console.Error.WriteLine("[readTask started]");
-
                 while (_isAttached && !_cts.Token.IsCancellationRequested)
                 {
                     var msg = await ProtocolSerializer.DeserializeAsync<ServerMessage>(_pipe!, _cts.Token);
@@ -812,10 +809,6 @@ class ScreenClient
                     switch (msg)
                     {
                         case OutputMessage output:
-                            // DEBUG: 출력 수신 확인
-                            Console.Error.WriteLine($"[RECV:{output.Data.Length}]");
-
-                            // Console.Write 직접 사용 (버퍼링 이슈 방지)
                             var text = System.Text.Encoding.UTF8.GetString(output.Data);
                             Console.Write(text);
                             break;

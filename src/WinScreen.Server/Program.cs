@@ -339,10 +339,6 @@ class ClientHandler
     private async Task HandleInput(InputMessage msg, CancellationToken ct)
     {
         if (_attachedSession == null) return;
-
-        // DEBUG: 입력 수신 확인
-        Console.WriteLine($"[{_clientId[..8]}] INPUT: {msg.Data.Length} bytes");
-
         await _attachedSession.WriteAsync(msg.Data, ct);
     }
 
@@ -465,9 +461,6 @@ class ClientHandler
 
     private void OnSessionOutput(byte[] data)
     {
-        // DEBUG: 출력 전송 확인
-        Console.WriteLine($"[{_clientId[..8]}] OUTPUT: {data.Length} bytes");
-
         _ = SendAsync(new OutputMessage { Data = data }, CancellationToken.None);
     }
 
