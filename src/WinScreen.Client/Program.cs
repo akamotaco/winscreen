@@ -597,16 +597,13 @@ class ScreenClient
                 Rows = (short)Console.WindowHeight
             };
 
-            Console.WriteLine("[DEBUG] Sending CreateSession message...");
             await ProtocolSerializer.SendAsync(_pipe!, createMsg, _cts.Token);
-
-            Console.WriteLine("[DEBUG] Waiting for response...");
             var response = await ProtocolSerializer.DeserializeAsync<ServerMessage>(_pipe!, _cts.Token);
-            Console.WriteLine($"[DEBUG] Got response: {response?.GetType().Name}");
 
             if (response is SessionCreatedMessage created)
             {
-                Console.WriteLine($"Created session: {created.Session.Name}");
+                // 세션 생성 완료 - ConPTY 초기화 대기 후 attach
+                await Task.Delay(50);
                 return await AttachToSessionInternal(created.Session.Id);
             }
 
@@ -616,13 +613,11 @@ class ScreenClient
                 return 1;
             }
 
-            Console.Error.WriteLine($"[DEBUG] Unexpected response type: {response?.GetType().Name}");
             return 1;
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"[DEBUG] CreateAndAttach error: {ex.Message}");
-            Console.Error.WriteLine($"[DEBUG] Stack: {ex.StackTrace}");
+            Console.Error.WriteLine($"Error: {ex.Message}");
             throw;
         }
     }
@@ -771,16 +766,8 @@ class ScreenClient
         {
             _isAttached = true;
             _attachedSessionId = attached.Session.Id;
-            
-            // 스크롤백 버퍼 출력
-            if (attached.ScrollbackBuffer != null && attached.ScrollbackBuffer.Length > 0)
-            {
-                using var stdout = Console.OpenStandardOutput();
-                stdout.Write(attached.ScrollbackBuffer, 0, attached.ScrollbackBuffer.Length);
-                stdout.Flush();
-            }
-            
-            return await RunTerminalLoop();
+
+            return await RunTerminalLoop(attached.ScrollbackBuffer);
         }
         
         if (response is ErrorMessage error)
@@ -792,7 +779,7 @@ class ScreenClient
         return 1;
     }
 
-    private async Task<int> RunTerminalLoop()
+    private async Task<int> RunTerminalLoop(byte[]? scrollbackBuffer = null)
     {
         // 콘솔 모드 설정
         EnableVirtualTerminal();
@@ -803,15 +790,21 @@ class ScreenClient
             // Ctrl+C는 터미널로 전달
         };
 
-        // stdout 스트림을 한 번만 열고 재사용
-        using var stdout = Console.OpenStandardOutput();
-        var stdoutLock = new object();
+        // 스크롤백 버퍼 출력 (VT 모드 설정 후)
+        if (scrollbackBuffer != null && scrollbackBuffer.Length > 0)
+        {
+            var scrollbackText = System.Text.Encoding.UTF8.GetString(scrollbackBuffer);
+            Console.Write(scrollbackText);
+        }
 
         // 읽기 태스크: 서버에서 출력 받아서 콘솔에 출력
         var readTask = Task.Run(async () =>
         {
             try
             {
+                // DEBUG: readTask 시작 확인
+                Console.Error.WriteLine("[readTask started]");
+
                 while (_isAttached && !_cts.Token.IsCancellationRequested)
                 {
                     var msg = await ProtocolSerializer.DeserializeAsync<ServerMessage>(_pipe!, _cts.Token);
@@ -819,31 +812,22 @@ class ScreenClient
                     switch (msg)
                     {
                         case OutputMessage output:
-                            lock (stdoutLock)
-                            {
-                                stdout.Write(output.Data, 0, output.Data.Length);
-                                stdout.Flush();
-                            }
+                            // DEBUG: 출력 수신 확인
+                            Console.Error.WriteLine($"[RECV:{output.Data.Length}]");
+
+                            // Console.Write 직접 사용 (버퍼링 이슈 방지)
+                            var text = System.Text.Encoding.UTF8.GetString(output.Data);
+                            Console.Write(text);
                             break;
 
                         case SessionEndedMessage ended:
-                            lock (stdoutLock)
-                            {
-                                var bytes = System.Text.Encoding.UTF8.GetBytes($"\r\n[Session ended with exit code {ended.ExitCode}]\r\n");
-                                stdout.Write(bytes, 0, bytes.Length);
-                                stdout.Flush();
-                            }
+                            Console.Write($"\r\n[Session ended with exit code {ended.ExitCode}]\r\n");
                             _isAttached = false;
                             _cts.Cancel();
                             return;
 
                         case DetachedMessage:
-                            lock (stdoutLock)
-                            {
-                                var bytes = System.Text.Encoding.UTF8.GetBytes("\r\n[Detached]\r\n");
-                                stdout.Write(bytes, 0, bytes.Length);
-                                stdout.Flush();
-                            }
+                            Console.Write("\r\n[Detached]\r\n");
                             _isAttached = false;
                             return;
                     }
@@ -852,12 +836,7 @@ class ScreenClient
             catch (OperationCanceledException) { }
             catch (Exception ex)
             {
-                lock (stdoutLock)
-                {
-                    var bytes = System.Text.Encoding.UTF8.GetBytes($"\r\nRead error: {ex.Message}\r\n");
-                    stdout.Write(bytes, 0, bytes.Length);
-                    stdout.Flush();
-                }
+                Console.Error.WriteLine($"\r\nRead error: {ex.Message}");
                 _isAttached = false;
             }
         });
@@ -867,6 +846,9 @@ class ScreenClient
         {
             try
             {
+                // readTask가 DeserializeAsync에 진입할 시간 확보
+                await Task.Delay(50, _cts.Token);
+
                 while (_isAttached && !_cts.Token.IsCancellationRequested)
                 {
                     // Console.KeyAvailable로 블로킹 방지
@@ -1170,10 +1152,11 @@ Examples:
         Console.InputEncoding = System.Text.Encoding.UTF8;
         Console.OutputEncoding = System.Text.Encoding.UTF8;
 
+        // 입력 모드 저장 (Console.ReadKey가 자체 관리하므로 변경하지 않음)
         var inputHandle = GetStdHandle(-10); // STD_INPUT_HANDLE
         GetConsoleMode(inputHandle, out _originalInputMode);
 
-        // 출력에 VT 처리 활성화
+        // 출력 모드: VT 처리 활성화
         var outputHandle = GetStdHandle(-11); // STD_OUTPUT_HANDLE
         GetConsoleMode(outputHandle, out _originalOutputMode);
         SetConsoleMode(outputHandle, _originalOutputMode | 0x0004); // ENABLE_VIRTUAL_TERMINAL_PROCESSING

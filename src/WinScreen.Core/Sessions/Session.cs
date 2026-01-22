@@ -55,7 +55,7 @@ public sealed class Session : IDisposable
         WorkingDirectory = workingDirectory;
         ProfileName = profileName;
 
-        // 파이프 스트림 생성
+        // 파이프 스트림 생성 (anonymous pipe는 overlapped I/O 미지원)
         _inputStream = new FileStream(_pty.PipeIn!, FileAccess.Write, 4096, false);
         _outputStream = new FileStream(_pty.PipeOut!, FileAccess.Read, 4096, false);
     }
@@ -117,17 +117,8 @@ public sealed class Session : IDisposable
             {
                 while (!_cts.Token.IsCancellationRequested)
                 {
-                    var readTask = _outputStream.ReadAsync(buffer, _cts.Token).AsTask();
-                    var completed = await Task.WhenAny(readTask, Task.Delay(500, _cts.Token));
-
-                    if (completed != readTask)
-                    {
-                        // 타임아웃 - 프로세스 종료 확인
-                        if (_pty.HasExited) break;
-                        continue;
-                    }
-
-                    var read = await readTask;
+                    // 단순히 ReadAsync로 블로킹 - 프로세스 종료 모니터링은 별도 태스크에서 처리
+                    var read = await _outputStream.ReadAsync(buffer, _cts.Token);
                     if (read == 0)
                     {
                         // 스트림 종료 = 프로세스 종료
