@@ -30,7 +30,7 @@ class ScreenClient
     private NamedPipeClientStream? _pipe;
     private bool _isAttached;
     private string? _attachedSessionId;
-    private readonly CancellationTokenSource _cts = new();
+    private CancellationTokenSource _cts = new();
     
     // Ctrl+A 상태 추적
     private bool _ctrlAPressed;
@@ -781,6 +781,13 @@ class ScreenClient
 
     private async Task<int> RunTerminalLoop(byte[]? scrollbackBuffer = null)
     {
+        // CancellationTokenSource 재설정 (이전 attach에서 Cancel된 경우 대비)
+        if (_cts.IsCancellationRequested)
+        {
+            _cts.Dispose();
+            _cts = new CancellationTokenSource();
+        }
+
         // 콘솔 모드 설정
         EnableVirtualTerminal();
 
