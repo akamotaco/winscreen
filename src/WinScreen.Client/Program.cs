@@ -766,10 +766,9 @@ class ScreenClient
         {
             _isAttached = true;
             _attachedSessionId = attached.Session.Id;
-
             return await RunTerminalLoop(attached.ScrollbackBuffer);
         }
-        
+
         if (response is ErrorMessage error)
         {
             Console.Error.WriteLine($"Error: {error.Message}");
