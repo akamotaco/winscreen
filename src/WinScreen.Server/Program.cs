@@ -303,18 +303,20 @@ class ClientHandler
         }
 
         _attachedSession = session;
-        session.OutputReceived += OnSessionOutput;
-        session.SessionEnded += OnSessionEndedWhileAttached;
 
         Console.WriteLine($"[{_clientId[..8]}] Attached to session: {session.Name}");
 
-        // 스크롤백 버퍼와 함께 응답
+        // 스크롤백 버퍼와 함께 응답 (이벤트 구독 전에 먼저 전송!)
         var scrollback = session.GetScrollbackBuffer();
-        await SendAsync(new AttachedMessage 
-        { 
+        await SendAsync(new AttachedMessage
+        {
             Session = session.ToInfo(),
             ScrollbackBuffer = scrollback.Length > 0 ? scrollback : null
         }, ct);
+
+        // AttachedMessage 전송 후 이벤트 구독 (순서 중요!)
+        session.OutputReceived += OnSessionOutput;
+        session.SessionEnded += OnSessionEndedWhileAttached;
     }
 
     private async Task HandleDetach(CancellationToken ct)
