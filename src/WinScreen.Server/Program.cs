@@ -216,7 +216,31 @@ class ClientHandler
                 case ListProfilesMessage:
                     await HandleListProfiles(ct);
                     break;
-                    
+
+                case AddProfileMessage addProfile:
+                    await HandleAddProfile(addProfile, ct);
+                    break;
+
+                case RemoveProfileMessage removeProfile:
+                    await HandleRemoveProfile(removeProfile, ct);
+                    break;
+
+                case GetProfileMessage getProfile:
+                    await HandleGetProfile(getProfile, ct);
+                    break;
+
+                case ResetProfilesMessage:
+                    await HandleResetProfiles(ct);
+                    break;
+
+                case GetDefaultProfileMessage:
+                    await HandleGetDefaultProfile(ct);
+                    break;
+
+                case SetDefaultProfileMessage setDefault:
+                    await HandleSetDefaultProfile(setDefault, ct);
+                    break;
+
                 case ShutdownMessage:
                     Environment.Exit(0);
                     break;
@@ -351,7 +375,89 @@ class ClientHandler
     private async Task HandleListProfiles(CancellationToken ct)
     {
         var profiles = _profileStore.GetAllInfo().ToList();
-        await SendAsync(new ProfileListMessage { Profiles = profiles }, ct);
+        await SendAsync(new ProfileListMessage
+        {
+            Profiles = profiles,
+            DefaultProfile = _profileStore.DefaultProfileName
+        }, ct);
+    }
+
+    private async Task HandleAddProfile(AddProfileMessage msg, CancellationToken ct)
+    {
+        var profile = new Profile
+        {
+            Name = msg.Name,
+            Description = msg.Description,
+            Shell = msg.Shell,
+            Arguments = msg.Arguments,
+            StartupCommand = msg.StartupCommand,
+            WorkingDirectory = msg.WorkingDirectory,
+            Environment = msg.Environment
+        };
+
+        _profileStore.Add(profile);
+        Console.WriteLine($"[{_clientId[..8]}] Added/Updated profile: {msg.Name}");
+
+        await SendAsync(new ProfileOkMessage { Message = $"Profile '{msg.Name}' saved successfully." }, ct);
+    }
+
+    private async Task HandleRemoveProfile(RemoveProfileMessage msg, CancellationToken ct)
+    {
+        try
+        {
+            if (_profileStore.Remove(msg.Name))
+            {
+                Console.WriteLine($"[{_clientId[..8]}] Removed profile: {msg.Name}");
+                await SendAsync(new ProfileOkMessage { Message = $"Profile '{msg.Name}' removed." }, ct);
+            }
+            else
+            {
+                await SendAsync(new ErrorMessage { Message = $"Profile '{msg.Name}' not found." }, ct);
+            }
+        }
+        catch (InvalidOperationException ex)
+        {
+            await SendAsync(new ErrorMessage { Message = ex.Message }, ct);
+        }
+    }
+
+    private async Task HandleGetProfile(GetProfileMessage msg, CancellationToken ct)
+    {
+        var profile = _profileStore.Get(msg.Name);
+        if (profile != null)
+        {
+            await SendAsync(new ProfileDetailMessage { Profile = profile.ToInfo() }, ct);
+        }
+        else
+        {
+            await SendAsync(new ErrorMessage { Message = $"Profile '{msg.Name}' not found." }, ct);
+        }
+    }
+
+    private async Task HandleResetProfiles(CancellationToken ct)
+    {
+        _profileStore.Reset();
+        Console.WriteLine($"[{_clientId[..8]}] Reset profiles to defaults");
+        await SendAsync(new ProfileOkMessage { Message = "Profiles reset to defaults." }, ct);
+    }
+
+    private async Task HandleGetDefaultProfile(CancellationToken ct)
+    {
+        await SendAsync(new DefaultProfileMessage { Name = _profileStore.DefaultProfileName }, ct);
+    }
+
+    private async Task HandleSetDefaultProfile(SetDefaultProfileMessage msg, CancellationToken ct)
+    {
+        try
+        {
+            _profileStore.SetDefaultProfile(msg.Name);
+            Console.WriteLine($"[{_clientId[..8]}] Set default profile: {msg.Name}");
+            await SendAsync(new ProfileOkMessage { Message = $"Default profile set to '{msg.Name}'." }, ct);
+        }
+        catch (ArgumentException ex)
+        {
+            await SendAsync(new ErrorMessage { Message = ex.Message }, ct);
+        }
     }
 
     private void OnSessionOutput(byte[] data)

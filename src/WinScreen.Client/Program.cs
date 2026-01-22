@@ -39,7 +39,20 @@ class ScreenClient
     public async Task<int> RunAsync(string[] args)
     {
         var parsed = ParseArgs(args);
-        
+
+        // 서버 연결이 필요 없는 명령어 먼저 처리
+        if (parsed.Command == Command.Help)
+            return ShowHelp();
+
+        if (parsed.Command == Command.ServerStatus)
+            return await CheckServerStatus();
+
+        if (parsed.Command == Command.ServerStop)
+            return await StopServer();
+
+        if (parsed.Command == Command.ServerStart)
+            return await StartServer();
+
         // 서버 시작 확인/자동 시작
         await EnsureServerRunning();
 
@@ -53,7 +66,12 @@ class ScreenClient
             Command.Detach => await DetachSession(parsed.SessionId),
             Command.Kill => await KillSession(parsed.SessionId!),
             Command.Wipe => await WipeAllSessions(),
-            Command.Help => ShowHelp(),
+            Command.ProfileAdd => await AddProfile(parsed),
+            Command.ProfileRemove => await RemoveProfile(parsed.ProfileName),
+            Command.ProfileShow => await ShowProfile(parsed.ProfileName),
+            Command.ProfileReset => await ResetProfiles(),
+            Command.GetDefault => await GetDefaultProfile(),
+            Command.SetDefault => await SetDefaultProfile(parsed.ProfileName),
             _ => await CreateAndAttach(parsed)
         };
     }
@@ -75,31 +93,47 @@ class ScreenClient
 
         // 서버 시작
         Console.WriteLine("Starting WinScreen server...");
-        
+
         var serverPath = FindServerExecutable();
         if (serverPath == null)
         {
-            throw new FileNotFoundException("winscreen-server.exe not found. Please ensure it's in the same directory or in PATH.");
+            Console.Error.WriteLine("Error: winscreen-server.exe not found.");
+            Console.Error.WriteLine();
+            Console.Error.WriteLine("Please ensure winscreen-server.exe is:");
+            Console.Error.WriteLine("  1. In the same directory as screen.exe");
+            Console.Error.WriteLine("  2. Or in a directory listed in your PATH");
+            Console.Error.WriteLine();
+            Console.Error.WriteLine($"Current directory: {AppDomain.CurrentDomain.BaseDirectory}");
+            throw new FileNotFoundException("winscreen-server.exe not found");
         }
 
-        var startInfo = new ProcessStartInfo
+        try
         {
-            FileName = serverPath,
-            UseShellExecute = true,
-            WindowStyle = ProcessWindowStyle.Hidden,
-            CreateNoWindow = true
-        };
-        
-        Process.Start(startInfo);
-        
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = serverPath,
+                UseShellExecute = true,
+                WindowStyle = ProcessWindowStyle.Hidden,
+                CreateNoWindow = true
+            };
+
+            Process.Start(startInfo);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Error: Failed to start server: {ex.Message}");
+            throw;
+        }
+
         // 서버 시작 대기
-        for (int i = 0; i < 20; i++)
+        for (int i = 0; i < 30; i++)
         {
             await Task.Delay(100);
             try
             {
                 _pipe = new NamedPipeClientStream(".", Constants.PipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
                 await _pipe.ConnectAsync(500);
+                Console.WriteLine("Server started successfully.");
                 return;
             }
             catch (TimeoutException)
@@ -108,7 +142,10 @@ class ScreenClient
                 _pipe = null;
             }
         }
-        
+
+        Console.Error.WriteLine("Error: Server failed to start within timeout.");
+        Console.Error.WriteLine("  Check if another instance is running or if there are permission issues.");
+        Console.Error.WriteLine("  Use 'screen --server' to check server status.");
         throw new Exception("Failed to start server");
     }
 
@@ -116,11 +153,11 @@ class ScreenClient
     {
         var currentDir = AppDomain.CurrentDomain.BaseDirectory;
         var serverName = "winscreen-server.exe";
-        
+
         // 1. 같은 디렉토리
         var path = Path.Combine(currentDir, serverName);
         if (File.Exists(path)) return path;
-        
+
         // 2. PATH에서 검색
         var pathEnv = Environment.GetEnvironmentVariable("PATH") ?? "";
         foreach (var dir in pathEnv.Split(';'))
@@ -129,8 +166,181 @@ class ScreenClient
             path = Path.Combine(dir, serverName);
             if (File.Exists(path)) return path;
         }
-        
+
         return null;
+    }
+
+    private async Task<int> CheckServerStatus()
+    {
+        try
+        {
+            using var pipe = new NamedPipeClientStream(".", Constants.PipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
+            await pipe.ConnectAsync(500);
+
+            // 서버에 연결 성공 - 세션 목록 요청
+            await ProtocolSerializer.SendAsync(pipe, new ListSessionsMessage(), CancellationToken.None);
+            var response = await ProtocolSerializer.DeserializeAsync<ServerMessage>(pipe, CancellationToken.None);
+
+            Console.WriteLine("WinScreen server is running.");
+
+            if (response is SessionListMessage list)
+            {
+                Console.WriteLine($"  Active sessions: {list.Sessions.Count}");
+                if (list.Sessions.Count > 0)
+                {
+                    var attached = list.Sessions.Count(s => s.IsAttached);
+                    var detached = list.Sessions.Count - attached;
+                    Console.WriteLine($"    Attached: {attached}, Detached: {detached}");
+                }
+            }
+
+            // 서버 프로세스 정보
+            var serverProcesses = Process.GetProcessesByName("winscreen-server");
+            if (serverProcesses.Length > 0)
+            {
+                var proc = serverProcesses[0];
+                Console.WriteLine($"  Server PID: {proc.Id}");
+                Console.WriteLine($"  Memory: {proc.WorkingSet64 / 1024 / 1024} MB");
+            }
+
+            return 0;
+        }
+        catch (TimeoutException)
+        {
+            Console.WriteLine("WinScreen server is not running.");
+            Console.WriteLine("  Use 'screen' to start the server automatically.");
+            return 1;
+        }
+    }
+
+    private async Task<int> StopServer()
+    {
+        try
+        {
+            using var pipe = new NamedPipeClientStream(".", Constants.PipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
+            await pipe.ConnectAsync(500);
+
+            // 서버에 종료 요청
+            await ProtocolSerializer.SendAsync(pipe, new ShutdownMessage(), CancellationToken.None);
+
+            Console.WriteLine("Shutdown signal sent to WinScreen server.");
+
+            // 서버 종료 대기
+            await Task.Delay(500);
+
+            // 종료 확인
+            try
+            {
+                using var checkPipe = new NamedPipeClientStream(".", Constants.PipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
+                await checkPipe.ConnectAsync(200);
+                Console.WriteLine("Warning: Server may still be running.");
+            }
+            catch
+            {
+                Console.WriteLine("Server stopped successfully.");
+            }
+
+            return 0;
+        }
+        catch (TimeoutException)
+        {
+            Console.WriteLine("WinScreen server is not running.");
+            return 0;
+        }
+    }
+
+    private async Task<int> StartServer()
+    {
+        // 1. 기존 서버가 실행 중이면 먼저 종료
+        try
+        {
+            using var pipe = new NamedPipeClientStream(".", Constants.PipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
+            await pipe.ConnectAsync(500);
+
+            Console.WriteLine("Stopping existing server...");
+            await ProtocolSerializer.SendAsync(pipe, new ShutdownMessage(), CancellationToken.None);
+
+            // 서버 종료 대기
+            for (int i = 0; i < 30; i++)
+            {
+                await Task.Delay(100);
+                try
+                {
+                    using var checkPipe = new NamedPipeClientStream(".", Constants.PipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
+                    await checkPipe.ConnectAsync(100);
+                    // 아직 실행 중
+                }
+                catch (TimeoutException)
+                {
+                    // 서버가 종료됨
+                    break;
+                }
+            }
+        }
+        catch (TimeoutException)
+        {
+            // 서버가 이미 실행 중이지 않음
+        }
+
+        // 2. 새 서버 시작
+        Console.WriteLine("Starting WinScreen server...");
+
+        var serverPath = FindServerExecutable();
+        if (serverPath == null)
+        {
+            Console.Error.WriteLine("Error: winscreen-server.exe not found.");
+            Console.Error.WriteLine();
+            Console.Error.WriteLine("Please ensure winscreen-server.exe is:");
+            Console.Error.WriteLine("  1. In the same directory as screen.exe");
+            Console.Error.WriteLine("  2. Or in a directory listed in your PATH");
+            return 1;
+        }
+
+        try
+        {
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = serverPath,
+                UseShellExecute = true,
+                WindowStyle = ProcessWindowStyle.Hidden,
+                CreateNoWindow = true
+            };
+
+            Process.Start(startInfo);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Error: Failed to start server: {ex.Message}");
+            return 1;
+        }
+
+        // 3. 서버 시작 확인
+        for (int i = 0; i < 30; i++)
+        {
+            await Task.Delay(100);
+            try
+            {
+                using var pipe = new NamedPipeClientStream(".", Constants.PipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
+                await pipe.ConnectAsync(500);
+                Console.WriteLine("Server started successfully.");
+
+                // 서버 프로세스 정보
+                var serverProcesses = Process.GetProcessesByName("winscreen-server");
+                if (serverProcesses.Length > 0)
+                {
+                    Console.WriteLine($"  Server PID: {serverProcesses[0].Id}");
+                }
+
+                return 0;
+            }
+            catch (TimeoutException)
+            {
+                // 아직 시작 중
+            }
+        }
+
+        Console.Error.WriteLine("Error: Server failed to start within timeout.");
+        return 1;
     }
 
     private async Task<int> ListSessions()
@@ -175,15 +385,199 @@ class ScreenClient
 
         if (response is ProfileListMessage list)
         {
-            Console.WriteLine("Available profiles:");
+            Console.WriteLine($"Available profiles (default: {list.DefaultProfile ?? "cmd"}):");
             Console.WriteLine($"{"Name",-15} {"Shell",-25} {"Description"}");
             Console.WriteLine(new string('-', 70));
-            
+
             foreach (var profile in list.Profiles)
             {
-                Console.WriteLine($"{profile.Name,-15} {profile.Shell ?? "-",-25} {profile.Description ?? ""}");
+                var name = profile.Name;
+                if (list.DefaultProfile != null && name.Equals(list.DefaultProfile, StringComparison.OrdinalIgnoreCase))
+                {
+                    name += " *";
+                }
+                Console.WriteLine($"{name,-15} {profile.Shell ?? "-",-25} {profile.Description ?? ""}");
             }
             return 0;
+        }
+
+        return 1;
+    }
+
+    private async Task<int> AddProfile(ParsedArgs args)
+    {
+        if (string.IsNullOrEmpty(args.ProfileName))
+        {
+            Console.Error.WriteLine("Error: Profile name is required.");
+            Console.Error.WriteLine("Usage: screen --profile-add <name> --shell <shell> [--args <args>] [--startup <cmd>] [--desc <description>]");
+            return 1;
+        }
+
+        if (string.IsNullOrEmpty(args.ProfileShell))
+        {
+            Console.Error.WriteLine("Error: Shell is required for new profile.");
+            Console.Error.WriteLine("Usage: screen --profile-add <name> --shell <shell> [--args <args>] [--startup <cmd>] [--desc <description>]");
+            return 1;
+        }
+
+        var msg = new AddProfileMessage
+        {
+            Name = args.ProfileName,
+            Shell = args.ProfileShell,
+            Arguments = args.ProfileArgs,
+            StartupCommand = args.ProfileStartup,
+            Description = args.ProfileDescription,
+            WorkingDirectory = args.WorkingDirectory
+        };
+
+        await ProtocolSerializer.SendAsync(_pipe!, msg, _cts.Token);
+        var response = await ProtocolSerializer.DeserializeAsync<ServerMessage>(_pipe!, _cts.Token);
+
+        if (response is ProfileOkMessage ok)
+        {
+            Console.WriteLine(ok.Message);
+            return 0;
+        }
+
+        if (response is ErrorMessage error)
+        {
+            Console.Error.WriteLine($"Error: {error.Message}");
+            return 1;
+        }
+
+        return 1;
+    }
+
+    private async Task<int> RemoveProfile(string? name)
+    {
+        if (string.IsNullOrEmpty(name))
+        {
+            Console.Error.WriteLine("Error: Profile name is required.");
+            Console.Error.WriteLine("Usage: screen --profile-remove <name>");
+            return 1;
+        }
+
+        await ProtocolSerializer.SendAsync(_pipe!, new RemoveProfileMessage { Name = name }, _cts.Token);
+        var response = await ProtocolSerializer.DeserializeAsync<ServerMessage>(_pipe!, _cts.Token);
+
+        if (response is ProfileOkMessage ok)
+        {
+            Console.WriteLine(ok.Message);
+            return 0;
+        }
+
+        if (response is ErrorMessage error)
+        {
+            Console.Error.WriteLine($"Error: {error.Message}");
+            return 1;
+        }
+
+        return 1;
+    }
+
+    private async Task<int> ShowProfile(string? name)
+    {
+        if (string.IsNullOrEmpty(name))
+        {
+            Console.Error.WriteLine("Error: Profile name is required.");
+            Console.Error.WriteLine("Usage: screen --profile-show <name>");
+            return 1;
+        }
+
+        await ProtocolSerializer.SendAsync(_pipe!, new GetProfileMessage { Name = name }, _cts.Token);
+        var response = await ProtocolSerializer.DeserializeAsync<ServerMessage>(_pipe!, _cts.Token);
+
+        if (response is ProfileDetailMessage detail)
+        {
+            var p = detail.Profile;
+            Console.WriteLine($"Profile: {p.Name}");
+            Console.WriteLine($"  Description: {p.Description ?? "-"}");
+            Console.WriteLine($"  Shell:       {p.Shell ?? "-"}");
+            Console.WriteLine($"  Arguments:   {p.Arguments ?? "-"}");
+            Console.WriteLine($"  Startup:     {p.StartupCommand ?? "-"}");
+            Console.WriteLine($"  WorkDir:     {p.WorkingDirectory ?? "-"}");
+            if (p.Environment != null && p.Environment.Count > 0)
+            {
+                Console.WriteLine($"  Environment:");
+                foreach (var kv in p.Environment)
+                {
+                    Console.WriteLine($"    {kv.Key}={kv.Value}");
+                }
+            }
+            return 0;
+        }
+
+        if (response is ErrorMessage error)
+        {
+            Console.Error.WriteLine($"Error: {error.Message}");
+            return 1;
+        }
+
+        return 1;
+    }
+
+    private async Task<int> ResetProfiles()
+    {
+        await ProtocolSerializer.SendAsync(_pipe!, new ResetProfilesMessage(), _cts.Token);
+        var response = await ProtocolSerializer.DeserializeAsync<ServerMessage>(_pipe!, _cts.Token);
+
+        if (response is ProfileOkMessage ok)
+        {
+            Console.WriteLine(ok.Message);
+            return 0;
+        }
+
+        if (response is ErrorMessage error)
+        {
+            Console.Error.WriteLine($"Error: {error.Message}");
+            return 1;
+        }
+
+        return 1;
+    }
+
+    private async Task<int> GetDefaultProfile()
+    {
+        await ProtocolSerializer.SendAsync(_pipe!, new GetDefaultProfileMessage(), _cts.Token);
+        var response = await ProtocolSerializer.DeserializeAsync<ServerMessage>(_pipe!, _cts.Token);
+
+        if (response is DefaultProfileMessage defaultProfile)
+        {
+            Console.WriteLine($"Default profile: {defaultProfile.Name}");
+            return 0;
+        }
+
+        if (response is ErrorMessage error)
+        {
+            Console.Error.WriteLine($"Error: {error.Message}");
+            return 1;
+        }
+
+        return 1;
+    }
+
+    private async Task<int> SetDefaultProfile(string? name)
+    {
+        if (string.IsNullOrEmpty(name))
+        {
+            Console.Error.WriteLine("Error: Profile name is required.");
+            Console.Error.WriteLine("Usage: screen --set-default <profile-name>");
+            return 1;
+        }
+
+        await ProtocolSerializer.SendAsync(_pipe!, new SetDefaultProfileMessage { Name = name }, _cts.Token);
+        var response = await ProtocolSerializer.DeserializeAsync<ServerMessage>(_pipe!, _cts.Token);
+
+        if (response is ProfileOkMessage ok)
+        {
+            Console.WriteLine(ok.Message);
+            return 0;
+        }
+
+        if (response is ErrorMessage error)
+        {
+            Console.Error.WriteLine($"Error: {error.Message}");
+            return 1;
         }
 
         return 1;
@@ -382,7 +776,8 @@ class ScreenClient
             if (attached.ScrollbackBuffer != null && attached.ScrollbackBuffer.Length > 0)
             {
                 using var stdout = Console.OpenStandardOutput();
-                await stdout.WriteAsync(attached.ScrollbackBuffer);
+                stdout.Write(attached.ScrollbackBuffer, 0, attached.ScrollbackBuffer.Length);
+                stdout.Flush();
             }
             
             return await RunTerminalLoop();
@@ -401,12 +796,16 @@ class ScreenClient
     {
         // 콘솔 모드 설정
         EnableVirtualTerminal();
-        
+
         Console.CancelKeyPress += (_, e) =>
         {
             e.Cancel = true;
             // Ctrl+C는 터미널로 전달
         };
+
+        // stdout 스트림을 한 번만 열고 재사용
+        using var stdout = Console.OpenStandardOutput();
+        var stdoutLock = new object();
 
         // 읽기 태스크: 서버에서 출력 받아서 콘솔에 출력
         var readTask = Task.Run(async () =>
@@ -416,24 +815,35 @@ class ScreenClient
                 while (_isAttached && !_cts.Token.IsCancellationRequested)
                 {
                     var msg = await ProtocolSerializer.DeserializeAsync<ServerMessage>(_pipe!, _cts.Token);
-                    
+
                     switch (msg)
                     {
                         case OutputMessage output:
-                            using (var stdout = Console.OpenStandardOutput())
+                            lock (stdoutLock)
                             {
-                                await stdout.WriteAsync(output.Data, _cts.Token);
+                                stdout.Write(output.Data, 0, output.Data.Length);
+                                stdout.Flush();
                             }
                             break;
-                            
+
                         case SessionEndedMessage ended:
-                            Console.WriteLine($"\r\n[Session ended with exit code {ended.ExitCode}]");
+                            lock (stdoutLock)
+                            {
+                                var bytes = System.Text.Encoding.UTF8.GetBytes($"\r\n[Session ended with exit code {ended.ExitCode}]\r\n");
+                                stdout.Write(bytes, 0, bytes.Length);
+                                stdout.Flush();
+                            }
                             _isAttached = false;
                             _cts.Cancel();
                             return;
-                            
+
                         case DetachedMessage:
-                            Console.WriteLine("\r\n[Detached]");
+                            lock (stdoutLock)
+                            {
+                                var bytes = System.Text.Encoding.UTF8.GetBytes("\r\n[Detached]\r\n");
+                                stdout.Write(bytes, 0, bytes.Length);
+                                stdout.Flush();
+                            }
                             _isAttached = false;
                             return;
                     }
@@ -442,7 +852,12 @@ class ScreenClient
             catch (OperationCanceledException) { }
             catch (Exception ex)
             {
-                Console.Error.WriteLine($"\r\nRead error: {ex.Message}");
+                lock (stdoutLock)
+                {
+                    var bytes = System.Text.Encoding.UTF8.GetBytes($"\r\nRead error: {ex.Message}\r\n");
+                    stdout.Write(bytes, 0, bytes.Length);
+                    stdout.Flush();
+                }
                 _isAttached = false;
             }
         });
@@ -700,11 +1115,31 @@ Commands:
   -r, -resume [id]     Attach to detached session (auto-select if only one)
   -R [id]              Attach or create if no session exists
   -S <name>            Create session with name
-  -p <profile>         Use profile (default, powershell, pwsh, conda, etc.)
+  -p <profile>         Use profile (cmd, powershell, pwsh, conda, etc.)
   -d <id>              Detach session
   -X kill <id>         Kill session
   -wipe                Kill all sessions
+
+Server Management:
+  --server             Check server status
+  --server-start       Start server (restarts if already running)
+  --server-stop        Stop the server (all sessions will be terminated)
+
+Profile Management:
   --profiles           List available profiles
+  --profile-add <name> Add/update profile (requires --shell)
+  --profile-remove <n> Remove a profile
+  --profile-show <n>   Show profile details
+  --profile-reset      Reset profiles to defaults
+  --default            Show current default profile
+  --set-default <name> Set default profile
+
+Profile Options (for --profile-add):
+  --shell <path>       Shell executable (required)
+  --args <args>        Shell arguments
+  --startup <cmd>      Startup command
+  --desc <text>        Profile description
+
   -h, --help           Show this help
 
 Key Bindings (when attached):
@@ -829,7 +1264,72 @@ Examples:
                 case "--profiles":
                     result.Command = Command.ListProfiles;
                     break;
-                    
+
+                case "--server":
+                case "--server-status":
+                    result.Command = Command.ServerStatus;
+                    break;
+
+                case "--server-stop":
+                case "--quit":
+                    result.Command = Command.ServerStop;
+                    break;
+
+                case "--server-start":
+                    result.Command = Command.ServerStart;
+                    break;
+
+                case "--profile-add":
+                    result.Command = Command.ProfileAdd;
+                    if (i + 1 < args.Length && !args[i + 1].StartsWith("-"))
+                        result.ProfileName = args[++i];
+                    break;
+
+                case "--profile-remove":
+                case "--profile-delete":
+                    result.Command = Command.ProfileRemove;
+                    if (i + 1 < args.Length && !args[i + 1].StartsWith("-"))
+                        result.ProfileName = args[++i];
+                    break;
+
+                case "--profile-show":
+                    result.Command = Command.ProfileShow;
+                    if (i + 1 < args.Length && !args[i + 1].StartsWith("-"))
+                        result.ProfileName = args[++i];
+                    break;
+
+                case "--profile-reset":
+                    result.Command = Command.ProfileReset;
+                    break;
+
+                case "--default":
+                case "--get-default":
+                    result.Command = Command.GetDefault;
+                    break;
+
+                case "--set-default":
+                    result.Command = Command.SetDefault;
+                    if (i + 1 < args.Length && !args[i + 1].StartsWith("-"))
+                        result.ProfileName = args[++i];
+                    break;
+
+                case "--shell":
+                    if (i + 1 < args.Length) result.ProfileShell = args[++i];
+                    break;
+
+                case "--args":
+                    if (i + 1 < args.Length) result.ProfileArgs = args[++i];
+                    break;
+
+                case "--startup":
+                    if (i + 1 < args.Length) result.ProfileStartup = args[++i];
+                    break;
+
+                case "--desc":
+                case "--description":
+                    if (i + 1 < args.Length) result.ProfileDescription = args[++i];
+                    break;
+
                 case "-h":
                 case "--help":
                 case "/?":
@@ -865,7 +1365,16 @@ enum Command
     Detach,
     Kill,
     Wipe,
-    Help
+    Help,
+    ServerStatus,
+    ServerStart,
+    ServerStop,
+    ProfileAdd,
+    ProfileRemove,
+    ProfileShow,
+    ProfileReset,
+    GetDefault,
+    SetDefault
 }
 
 class ParsedArgs
@@ -875,4 +1384,11 @@ class ParsedArgs
     public string? SessionName { get; set; }
     public string? Profile { get; set; }
     public string? WorkingDirectory { get; set; }
+
+    // Profile management args
+    public string? ProfileName { get; set; }
+    public string? ProfileShell { get; set; }
+    public string? ProfileArgs { get; set; }
+    public string? ProfileStartup { get; set; }
+    public string? ProfileDescription { get; set; }
 }

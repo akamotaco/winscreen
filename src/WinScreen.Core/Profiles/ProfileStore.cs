@@ -31,6 +31,7 @@ public class Profile
         Name = Name,
         Description = Description,
         Shell = Shell,
+        Arguments = Arguments,
         StartupCommand = StartupCommand,
         WorkingDirectory = WorkingDirectory,
         Environment = Environment
@@ -71,18 +72,39 @@ public class Profile
 }
 
 /// <summary>
+/// 프로필 설정 파일 구조
+/// </summary>
+internal class ProfileConfig
+{
+    public string DefaultProfile { get; set; } = "cmd";
+    public List<Profile> Profiles { get; set; } = new();
+}
+
+/// <summary>
 /// 프로필 저장소
 /// </summary>
 public class ProfileStore
 {
     private readonly string _configPath;
     private Dictionary<string, Profile> _profiles = new(StringComparer.OrdinalIgnoreCase);
+    private string _defaultProfileName = "cmd";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
     };
+
+    /// <summary>기본 프로필 이름</summary>
+    public string DefaultProfileName
+    {
+        get => _defaultProfileName;
+        set
+        {
+            _defaultProfileName = value;
+            Save();
+        }
+    }
 
     public ProfileStore(string? configPath = null)
     {
@@ -108,13 +130,51 @@ public class ProfileStore
         try
         {
             var json = File.ReadAllText(_configPath);
-            var profiles = JsonSerializer.Deserialize<List<Profile>>(json, JsonOptions);
-            _profiles = profiles?.ToDictionary(p => p.Name, StringComparer.OrdinalIgnoreCase) 
-                        ?? new Dictionary<string, Profile>(StringComparer.OrdinalIgnoreCase);
+
+            // 새 형식 (ProfileConfig) 시도
+            var config = JsonSerializer.Deserialize<ProfileConfig>(json, JsonOptions);
+            if (config?.Profiles != null && config.Profiles.Count > 0)
+            {
+                _profiles = config.Profiles.ToDictionary(p => p.Name, StringComparer.OrdinalIgnoreCase);
+                _defaultProfileName = config.DefaultProfile ?? "cmd";
+
+                // 기본 프로필이 존재하지 않으면 첫 번째 프로필을 기본으로
+                if (!_profiles.ContainsKey(_defaultProfileName) && _profiles.Count > 0)
+                {
+                    _defaultProfileName = _profiles.Keys.First();
+                    Save();
+                }
+            }
+            else
+            {
+                // 구 형식 (List<Profile>) 호환성
+                var profiles = JsonSerializer.Deserialize<List<Profile>>(json, JsonOptions);
+                _profiles = profiles?.ToDictionary(p => p.Name, StringComparer.OrdinalIgnoreCase)
+                            ?? new Dictionary<string, Profile>(StringComparer.OrdinalIgnoreCase);
+
+                // 구 형식에서 "default" 프로필이 있으면 마이그레이션
+                if (_profiles.ContainsKey("default") && !_profiles.ContainsKey("cmd"))
+                {
+                    var defaultProfile = _profiles["default"];
+                    defaultProfile.Name = "cmd";
+                    _profiles.Remove("default");
+                    _profiles["cmd"] = defaultProfile;
+                    _defaultProfileName = "cmd";
+                    Save(); // 새 형식으로 저장
+                }
+            }
+
+            // 프로필이 비어있으면 기본 프로필 생성
+            if (_profiles.Count == 0)
+            {
+                CreateDefaultProfiles();
+                Save();
+            }
         }
         catch
         {
             CreateDefaultProfiles();
+            Save();
         }
     }
 
@@ -126,18 +186,24 @@ public class ProfileStore
             Directory.CreateDirectory(dir);
         }
 
-        var json = JsonSerializer.Serialize(_profiles.Values.ToList(), JsonOptions);
+        var config = new ProfileConfig
+        {
+            DefaultProfile = _defaultProfileName,
+            Profiles = _profiles.Values.ToList()
+        };
+        var json = JsonSerializer.Serialize(config, JsonOptions);
         File.WriteAllText(_configPath, json);
     }
 
     private void CreateDefaultProfiles()
     {
+        _defaultProfileName = "cmd";
         _profiles = new Dictionary<string, Profile>(StringComparer.OrdinalIgnoreCase)
         {
-            ["default"] = new Profile
+            ["cmd"] = new Profile
             {
-                Name = "default",
-                Description = "Default Command Prompt",
+                Name = "cmd",
+                Description = "Command Prompt",
                 Shell = "cmd.exe"
             },
             ["powershell"] = new Profile
@@ -230,16 +296,25 @@ public class ProfileStore
     public Profile GetOrDefault(string? name)
     {
         if (string.IsNullOrEmpty(name))
-            return _profiles.TryGetValue("default", out var def) ? def : CreateFallbackProfile();
+            return _profiles.TryGetValue(_defaultProfileName, out var def) ? def : CreateFallbackProfile();
 
         return _profiles.TryGetValue(name, out var profile) ? profile : CreateFallbackProfile();
     }
 
     private static Profile CreateFallbackProfile() => new()
     {
-        Name = "default",
+        Name = "cmd",
         Shell = "cmd.exe"
     };
+
+    public void SetDefaultProfile(string name)
+    {
+        if (!_profiles.ContainsKey(name))
+            throw new ArgumentException($"Profile '{name}' not found.");
+
+        _defaultProfileName = name;
+        Save();
+    }
 
     public void Add(Profile profile)
     {
@@ -249,12 +324,22 @@ public class ProfileStore
 
     public bool Remove(string name)
     {
+        // 기본 프로필은 삭제 불가
+        if (name.Equals(_defaultProfileName, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException($"Cannot remove the default profile '{name}'. Change the default profile first.");
+
         if (_profiles.Remove(name))
         {
             Save();
             return true;
         }
         return false;
+    }
+
+    public void Reset()
+    {
+        CreateDefaultProfiles();
+        Save();
     }
 
     public IEnumerable<Profile> GetAll() => _profiles.Values;

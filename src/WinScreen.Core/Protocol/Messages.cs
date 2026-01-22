@@ -24,6 +24,18 @@ public enum ClientMessageType
     KillSession,
     /// <summary>프로필 목록 요청</summary>
     ListProfiles,
+    /// <summary>프로필 추가/수정</summary>
+    AddProfile,
+    /// <summary>프로필 삭제</summary>
+    RemoveProfile,
+    /// <summary>프로필 상세 조회</summary>
+    GetProfile,
+    /// <summary>프로필 초기화</summary>
+    ResetProfiles,
+    /// <summary>기본 프로필 조회</summary>
+    GetDefaultProfile,
+    /// <summary>기본 프로필 설정</summary>
+    SetDefaultProfile,
     /// <summary>서버 종료</summary>
     Shutdown
 }
@@ -48,7 +60,13 @@ public enum ServerMessageType
     /// <summary>오류</summary>
     Error,
     /// <summary>프로필 목록</summary>
-    ProfileList
+    ProfileList,
+    /// <summary>프로필 상세</summary>
+    ProfileDetail,
+    /// <summary>프로필 작업 성공</summary>
+    ProfileOk,
+    /// <summary>기본 프로필</summary>
+    DefaultProfile
 }
 
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "$type")]
@@ -60,6 +78,12 @@ public enum ServerMessageType
 [JsonDerivedType(typeof(ResizeMessage), "resize")]
 [JsonDerivedType(typeof(KillSessionMessage), "kill")]
 [JsonDerivedType(typeof(ListProfilesMessage), "profiles")]
+[JsonDerivedType(typeof(AddProfileMessage), "addProfile")]
+[JsonDerivedType(typeof(RemoveProfileMessage), "removeProfile")]
+[JsonDerivedType(typeof(GetProfileMessage), "getProfile")]
+[JsonDerivedType(typeof(ResetProfilesMessage), "resetProfiles")]
+[JsonDerivedType(typeof(GetDefaultProfileMessage), "getDefault")]
+[JsonDerivedType(typeof(SetDefaultProfileMessage), "setDefault")]
 [JsonDerivedType(typeof(ShutdownMessage), "shutdown")]
 public abstract class ClientMessage
 {
@@ -123,6 +147,46 @@ public class ShutdownMessage : ClientMessage
     public override ClientMessageType Type => ClientMessageType.Shutdown;
 }
 
+public class AddProfileMessage : ClientMessage
+{
+    public override ClientMessageType Type => ClientMessageType.AddProfile;
+    public required string Name { get; set; }
+    public string? Description { get; set; }
+    public required string Shell { get; set; }
+    public string? Arguments { get; set; }
+    public string? StartupCommand { get; set; }
+    public string? WorkingDirectory { get; set; }
+    public Dictionary<string, string>? Environment { get; set; }
+}
+
+public class RemoveProfileMessage : ClientMessage
+{
+    public override ClientMessageType Type => ClientMessageType.RemoveProfile;
+    public required string Name { get; set; }
+}
+
+public class GetProfileMessage : ClientMessage
+{
+    public override ClientMessageType Type => ClientMessageType.GetProfile;
+    public required string Name { get; set; }
+}
+
+public class ResetProfilesMessage : ClientMessage
+{
+    public override ClientMessageType Type => ClientMessageType.ResetProfiles;
+}
+
+public class GetDefaultProfileMessage : ClientMessage
+{
+    public override ClientMessageType Type => ClientMessageType.GetDefaultProfile;
+}
+
+public class SetDefaultProfileMessage : ClientMessage
+{
+    public override ClientMessageType Type => ClientMessageType.SetDefaultProfile;
+    public required string Name { get; set; }
+}
+
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "$type")]
 [JsonDerivedType(typeof(SessionListMessage), "sessionList")]
 [JsonDerivedType(typeof(SessionCreatedMessage), "created")]
@@ -132,6 +196,9 @@ public class ShutdownMessage : ClientMessage
 [JsonDerivedType(typeof(SessionEndedMessage), "ended")]
 [JsonDerivedType(typeof(ErrorMessage), "error")]
 [JsonDerivedType(typeof(ProfileListMessage), "profileList")]
+[JsonDerivedType(typeof(ProfileDetailMessage), "profileDetail")]
+[JsonDerivedType(typeof(ProfileOkMessage), "profileOk")]
+[JsonDerivedType(typeof(DefaultProfileMessage), "defaultProfile")]
 public abstract class ServerMessage
 {
     public abstract ServerMessageType Type { get; }
@@ -186,6 +253,25 @@ public class ProfileListMessage : ServerMessage
 {
     public override ServerMessageType Type => ServerMessageType.ProfileList;
     public required List<ProfileInfo> Profiles { get; set; }
+    public string? DefaultProfile { get; set; }
+}
+
+public class ProfileDetailMessage : ServerMessage
+{
+    public override ServerMessageType Type => ServerMessageType.ProfileDetail;
+    public required ProfileInfo Profile { get; set; }
+}
+
+public class ProfileOkMessage : ServerMessage
+{
+    public override ServerMessageType Type => ServerMessageType.ProfileOk;
+    public required string Message { get; set; }
+}
+
+public class DefaultProfileMessage : ServerMessage
+{
+    public override ServerMessageType Type => ServerMessageType.DefaultProfile;
+    public required string Name { get; set; }
 }
 
 /// <summary>
@@ -209,6 +295,7 @@ public class ProfileInfo
     public required string Name { get; set; }
     public string? Description { get; set; }
     public string? Shell { get; set; }
+    public string? Arguments { get; set; }
     public string? StartupCommand { get; set; }
     public string? WorkingDirectory { get; set; }
     public Dictionary<string, string>? Environment { get; set; }
