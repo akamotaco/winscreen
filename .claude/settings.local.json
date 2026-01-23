@@ -3,7 +3,9 @@
     "allow": [
       "Bash(ls:*)",
       "Bash(findstr:*)",
-      "Bash(./screen.exe:*)"
+      "Bash(./screen.exe:*)",
+      "Bash(git restore:*)",
+      "Bash(git checkout:*)"
     ]
   }
 }

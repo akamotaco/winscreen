@@ -53,7 +53,9 @@ public enum ClientMessageType
     /// <summary>윈도우 목록 요청</summary>
     ListWindows,
     /// <summary>윈도우 이름 변경</summary>
-    RenameWindow
+    RenameWindow,
+    /// <summary>세션 이름 변경</summary>
+    RenameSession
 }
 
 /// <summary>
@@ -94,7 +96,9 @@ public enum ServerMessageType
     /// <summary>윈도우 목록</summary>
     WindowList,
     /// <summary>윈도우 이름 변경됨</summary>
-    WindowRenamed
+    WindowRenamed,
+    /// <summary>세션 이름 변경됨</summary>
+    SessionRenamed
 }
 
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "$type")]
@@ -120,6 +124,7 @@ public enum ServerMessageType
 [JsonDerivedType(typeof(PreviousWindowMessage), "prevWindow")]
 [JsonDerivedType(typeof(ListWindowsMessage), "listWindows")]
 [JsonDerivedType(typeof(RenameWindowMessage), "renameWindow")]
+[JsonDerivedType(typeof(RenameSessionMessage), "renameSession")]
 public abstract class ClientMessage
 {
     public abstract ClientMessageType Type { get; }
@@ -269,6 +274,12 @@ public class RenameWindowMessage : ClientMessage
     public required string NewName { get; set; }
 }
 
+public class RenameSessionMessage : ClientMessage
+{
+    public override ClientMessageType Type => ClientMessageType.RenameSession;
+    public required string NewName { get; set; }
+}
+
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "$type")]
 [JsonDerivedType(typeof(SessionListMessage), "sessionList")]
 [JsonDerivedType(typeof(SessionCreatedMessage), "created")]
@@ -286,6 +297,7 @@ public class RenameWindowMessage : ClientMessage
 [JsonDerivedType(typeof(WindowEndedMessage), "windowEnded")]
 [JsonDerivedType(typeof(WindowListMessage), "windowList")]
 [JsonDerivedType(typeof(WindowRenamedMessage), "windowRenamed")]
+[JsonDerivedType(typeof(SessionRenamedMessage), "sessionRenamed")]
 public abstract class ServerMessage
 {
     public abstract ServerMessageType Type { get; }
@@ -400,6 +412,12 @@ public class WindowRenamedMessage : ServerMessage
 {
     public override ServerMessageType Type => ServerMessageType.WindowRenamed;
     public required int WindowIndex { get; set; }
+    public required string NewName { get; set; }
+}
+
+public class SessionRenamedMessage : ServerMessage
+{
+    public override ServerMessageType Type => ServerMessageType.SessionRenamed;
     public required string NewName { get; set; }
 }
 

@@ -901,6 +901,10 @@ class ScreenClient
                         case WindowRenamedMessage renamed:
                             Console.Write($"\r\n[Window {renamed.WindowIndex} renamed to '{renamed.NewName}']\r\n");
                             break;
+
+                        case SessionRenamedMessage sessionRenamed:
+                            Console.Write($"\r\n[Session renamed to '{sessionRenamed.NewName}']\r\n");
+                            break;
                     }
                 }
             }
@@ -963,10 +967,21 @@ class ScreenClient
                             // Shift+A (대문자 A): 윈도우 이름 변경
                             if (keyInfo.Key == ConsoleKey.A && keyInfo.Modifiers.HasFlag(ConsoleModifiers.Shift))
                             {
-                                var newName = ReadWindowName();
+                                var newName = ReadName("Set window's title to: ");
                                 if (!string.IsNullOrEmpty(newName))
                                 {
                                     await ProtocolSerializer.SendAsync(_pipe!, new RenameWindowMessage { NewName = newName }, _cts.Token);
+                                }
+                                continue;
+                            }
+
+                            // $ : 세션 이름 변경 (GNU Screen 호환)
+                            if (keyInfo.KeyChar == '$')
+                            {
+                                var newName = ReadName("Set session's name to: ");
+                                if (!string.IsNullOrEmpty(newName))
+                                {
+                                    await ProtocolSerializer.SendAsync(_pipe!, new RenameSessionMessage { NewName = newName }, _cts.Token);
                                 }
                                 continue;
                             }
@@ -1146,9 +1161,9 @@ class ScreenClient
         return Array.Empty<byte>();
     }
 
-    private static string? ReadWindowName()
+    private static string? ReadName(string prompt)
     {
-        Console.Write("\r\nSet window's title to: ");
+        Console.Write($"\r\n{prompt}");
         var name = new System.Text.StringBuilder();
 
         while (true)
@@ -1196,6 +1211,7 @@ class ScreenClient
         Console.WriteLine("  Ctrl+A, W      List windows");
         Console.WriteLine("  Ctrl+A, 0-9    Switch to window N");
         Console.WriteLine("  Ctrl+A, Shift+A  Rename current window");
+        Console.WriteLine("  Ctrl+A, $      Rename session");
         Console.WriteLine("  Ctrl+A, A      Send Ctrl+A");
         Console.WriteLine("  Ctrl+A, ?      Show this help");
         Console.WriteLine("--------------------------------\r\n");

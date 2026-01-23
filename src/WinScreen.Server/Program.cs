@@ -295,6 +295,10 @@ class ClientHandler
                 case RenameWindowMessage renameWindow:
                     await HandleRenameWindow(renameWindow, ct);
                     break;
+
+                case RenameSessionMessage renameSession:
+                    await HandleRenameSession(renameSession, ct);
+                    break;
             }
         }
         catch (Exception ex)
@@ -724,6 +728,22 @@ class ClientHandler
             WindowIndex = windowIndex,
             NewName = msg.NewName
         }, ct);
+    }
+
+    private async Task HandleRenameSession(RenameSessionMessage msg, CancellationToken ct)
+    {
+        if (_attachedSession == null)
+        {
+            await SendAsync(new ErrorMessage { Message = "Not attached to any session" }, ct);
+            return;
+        }
+
+        var oldName = _attachedSession.Name;
+        _attachedSession.Name = msg.NewName;
+
+        Console.WriteLine($"[{_clientId[..8]}] Renamed session '{oldName}' to '{msg.NewName}'");
+
+        await SendAsync(new SessionRenamedMessage { NewName = msg.NewName }, ct);
     }
 
     private async void OnWindowEndedWhileAttached(int windowIndex, int exitCode)
