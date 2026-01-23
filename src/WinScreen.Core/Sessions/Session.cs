@@ -15,7 +15,6 @@ public sealed class Session : IDisposable
     private readonly int _maxScrollbackSize;
 
     private int _activeWindowIndex = 0;
-    private int _nextWindowIndex = 0;
     private bool _disposed;
 
     public string Id { get; }
@@ -172,6 +171,23 @@ public sealed class Session : IDisposable
         return CreateWindowInternal(commandLine, windowName, workingDirectory, profileName, env, cols, rows);
     }
 
+    /// <summary>
+    /// 가장 작은 사용 가능한 윈도우 인덱스 찾기 (GNU Screen 방식)
+    /// </summary>
+    private int FindNextAvailableIndex()
+    {
+        // _windowsLock이 이미 잡혀있다고 가정
+        var usedIndices = _windows.Select(w => w.Index).ToHashSet();
+
+        // 0부터 시작해서 사용하지 않는 가장 작은 인덱스 찾기
+        var index = 0;
+        while (usedIndices.Contains(index))
+        {
+            index++;
+        }
+        return index;
+    }
+
     private Window CreateWindowInternal(
         string commandLine,
         string? windowName,
@@ -183,7 +199,8 @@ public sealed class Session : IDisposable
     {
         lock (_windowsLock)
         {
-            var index = _nextWindowIndex++;
+            // GNU Screen 방식: 가장 작은 사용 가능한 인덱스 찾기
+            var index = FindNextAvailableIndex();
             windowName ??= $"window-{index}";
 
             var window = Window.Create(

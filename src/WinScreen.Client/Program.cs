@@ -48,11 +48,11 @@ class ScreenClient
         var winscreenEnv = Environment.GetEnvironmentVariable("WINSCREEN");
         if (!string.IsNullOrEmpty(winscreenEnv) && !parsed.ForceNewSession)
         {
-            // nested session에서 허용되는 명령
+            // nested session에서 허용되는 명령 (ServerStop은 제외 - 실수 방지)
             var allowedCommands = new[]
             {
                 Command.List, Command.ListProfiles, Command.Help,
-                Command.ServerStatus, Command.ServerStop,
+                Command.ServerStatus,
                 Command.ProfileShow, Command.GetDefault
             };
 
