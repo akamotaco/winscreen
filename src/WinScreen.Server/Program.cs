@@ -148,6 +148,10 @@ class ClientHandler
 
     private Session? _attachedSession;
 
+    // 현재 클라이언트 터미널 크기 (윈도우 전환 시 리사이즈용)
+    private short _terminalCols;
+    private short _terminalRows;
+
     public ClientHandler(
         string clientId,
         NamedPipeServerStream pipe,
@@ -376,6 +380,8 @@ class ClientHandler
         }
 
         _attachedSession = session;
+        _terminalCols = msg.Cols;
+        _terminalRows = msg.Rows;
 
         Console.WriteLine($"[{_clientId[..8]}] Attached to session: {session.Name}");
 
@@ -436,6 +442,8 @@ class ClientHandler
 
     private void HandleResize(ResizeMessage msg)
     {
+        _terminalCols = msg.Cols;
+        _terminalRows = msg.Rows;
         _attachedSession?.Resize(msg.Cols, msg.Rows);
     }
 
@@ -455,6 +463,8 @@ class ClientHandler
         {
             _attachedSession.OutputReceived -= OnSessionOutput;
             _attachedSession.SessionEnded -= OnSessionEndedWhileAttached;
+            _attachedSession.WindowEnded -= OnWindowEndedWhileAttached;
+            _attachedSession.ActiveWindowChanged -= OnActiveWindowChanged;
             _attachedSession = null;
         }
 
@@ -570,8 +580,8 @@ class ClientHandler
             workingDir,
             profile.Name,
             profile.Environment,
-            (short)Console.WindowWidth,
-            (short)Console.WindowHeight);
+            _terminalCols,
+            _terminalRows);
 
         // 새 윈도우로 자동 전환
         _attachedSession.SwitchWindow(window.Index);
@@ -628,6 +638,9 @@ class ClientHandler
         var window = _attachedSession.ActiveWindow;
         if (window == null) return;
 
+        // 윈도우 전환 시 현재 터미널 크기로 리사이즈
+        window.Resize(_terminalCols, _terminalRows);
+
         Console.WriteLine($"[{_clientId[..8]}] Switched to window {msg.WindowIndex} in session {_attachedSession.Id[..8]}");
 
         await SendAsync(new WindowSwitchedMessage
@@ -655,6 +668,9 @@ class ClientHandler
         var window = _attachedSession.ActiveWindow;
         if (window == null) return;
 
+        // 윈도우 전환 시 현재 터미널 크기로 리사이즈
+        window.Resize(_terminalCols, _terminalRows);
+
         Console.WriteLine($"[{_clientId[..8]}] Switched to next window {window.Index}");
 
         await SendAsync(new WindowSwitchedMessage
@@ -681,6 +697,9 @@ class ClientHandler
 
         var window = _attachedSession.ActiveWindow;
         if (window == null) return;
+
+        // 윈도우 전환 시 현재 터미널 크기로 리사이즈
+        window.Resize(_terminalCols, _terminalRows);
 
         Console.WriteLine($"[{_clientId[..8]}] Switched to previous window {window.Index}");
 
@@ -784,6 +803,9 @@ class ClientHandler
                 var window = _attachedSession.ActiveWindow;
                 if (window != null)
                 {
+                    // 윈도우 전환 시 현재 터미널 크기로 리사이즈
+                    window.Resize(_terminalCols, _terminalRows);
+
                     await SendAsync(new WindowSwitchedMessage
                     {
                         WindowIndex = window.Index,
@@ -816,6 +838,9 @@ class ClientHandler
             var window = _attachedSession.GetWindow(newWindowIndex);
             if (window != null)
             {
+                // 윈도우 전환 시 현재 터미널 크기로 리사이즈
+                window.Resize(_terminalCols, _terminalRows);
+
                 await SendAsync(new WindowSwitchedMessage
                 {
                     WindowIndex = window.Index,
