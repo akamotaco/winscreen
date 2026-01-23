@@ -51,7 +51,9 @@ public enum ClientMessageType
     /// <summary>이전 윈도우</summary>
     PreviousWindow,
     /// <summary>윈도우 목록 요청</summary>
-    ListWindows
+    ListWindows,
+    /// <summary>윈도우 이름 변경</summary>
+    RenameWindow
 }
 
 /// <summary>
@@ -90,7 +92,9 @@ public enum ServerMessageType
     /// <summary>윈도우 종료됨</summary>
     WindowEnded,
     /// <summary>윈도우 목록</summary>
-    WindowList
+    WindowList,
+    /// <summary>윈도우 이름 변경됨</summary>
+    WindowRenamed
 }
 
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "$type")]
@@ -115,6 +119,7 @@ public enum ServerMessageType
 [JsonDerivedType(typeof(NextWindowMessage), "nextWindow")]
 [JsonDerivedType(typeof(PreviousWindowMessage), "prevWindow")]
 [JsonDerivedType(typeof(ListWindowsMessage), "listWindows")]
+[JsonDerivedType(typeof(RenameWindowMessage), "renameWindow")]
 public abstract class ClientMessage
 {
     public abstract ClientMessageType Type { get; }
@@ -256,6 +261,14 @@ public class ListWindowsMessage : ClientMessage
     public override ClientMessageType Type => ClientMessageType.ListWindows;
 }
 
+public class RenameWindowMessage : ClientMessage
+{
+    public override ClientMessageType Type => ClientMessageType.RenameWindow;
+    /// <summary>이름 변경할 윈도우 인덱스. null이면 현재 활성 윈도우</summary>
+    public int? WindowIndex { get; set; }
+    public required string NewName { get; set; }
+}
+
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "$type")]
 [JsonDerivedType(typeof(SessionListMessage), "sessionList")]
 [JsonDerivedType(typeof(SessionCreatedMessage), "created")]
@@ -272,6 +285,7 @@ public class ListWindowsMessage : ClientMessage
 [JsonDerivedType(typeof(WindowSwitchedMessage), "windowSwitched")]
 [JsonDerivedType(typeof(WindowEndedMessage), "windowEnded")]
 [JsonDerivedType(typeof(WindowListMessage), "windowList")]
+[JsonDerivedType(typeof(WindowRenamedMessage), "windowRenamed")]
 public abstract class ServerMessage
 {
     public abstract ServerMessageType Type { get; }
@@ -380,6 +394,13 @@ public class WindowListMessage : ServerMessage
     public override ServerMessageType Type => ServerMessageType.WindowList;
     public required List<WindowInfo> Windows { get; set; }
     public int ActiveWindowIndex { get; set; }
+}
+
+public class WindowRenamedMessage : ServerMessage
+{
+    public override ServerMessageType Type => ServerMessageType.WindowRenamed;
+    public required int WindowIndex { get; set; }
+    public required string NewName { get; set; }
 }
 
 /// <summary>

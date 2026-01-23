@@ -897,6 +897,10 @@ class ScreenClient
                         case WindowCreatedMessage created:
                             Console.Write($"\r\n[Created window {created.Window.Index}: {created.Window.Name}]\r\n");
                             break;
+
+                        case WindowRenamedMessage renamed:
+                            Console.Write($"\r\n[Window {renamed.WindowIndex} renamed to '{renamed.NewName}']\r\n");
+                            break;
                     }
                 }
             }
@@ -956,6 +960,18 @@ class ScreenClient
                                 return;
                             }
 
+                            // Shift+A (대문자 A): 윈도우 이름 변경
+                            if (keyInfo.Key == ConsoleKey.A && keyInfo.Modifiers.HasFlag(ConsoleModifiers.Shift))
+                            {
+                                var newName = ReadWindowName();
+                                if (!string.IsNullOrEmpty(newName))
+                                {
+                                    await ProtocolSerializer.SendAsync(_pipe!, new RenameWindowMessage { NewName = newName }, _cts.Token);
+                                }
+                                continue;
+                            }
+
+                            // 소문자 a: Ctrl+A 전송
                             if (keyInfo.Key == ConsoleKey.A)
                             {
                                 await SendInput(new byte[] { 0x01 });
@@ -1130,19 +1146,59 @@ class ScreenClient
         return Array.Empty<byte>();
     }
 
+    private static string? ReadWindowName()
+    {
+        Console.Write("\r\nSet window's title to: ");
+        var name = new System.Text.StringBuilder();
+
+        while (true)
+        {
+            var key = Console.ReadKey(intercept: true);
+
+            if (key.Key == ConsoleKey.Enter)
+            {
+                Console.WriteLine();
+                return name.Length > 0 ? name.ToString() : null;
+            }
+
+            if (key.Key == ConsoleKey.Escape)
+            {
+                Console.WriteLine("\r\n[Cancelled]");
+                return null;
+            }
+
+            if (key.Key == ConsoleKey.Backspace)
+            {
+                if (name.Length > 0)
+                {
+                    name.Length--;
+                    Console.Write("\b \b");
+                }
+                continue;
+            }
+
+            if (key.KeyChar != '\0' && !char.IsControl(key.KeyChar))
+            {
+                name.Append(key.KeyChar);
+                Console.Write(key.KeyChar);
+            }
+        }
+    }
+
     private static void ShowTerminalHelp()
     {
         Console.WriteLine("\r\n--- WinScreen Key Bindings ---");
-        Console.WriteLine("  Ctrl+A, D    Detach from session");
-        Console.WriteLine("  Ctrl+A, K    Kill current window");
-        Console.WriteLine("  Ctrl+A, C    Create new window");
-        Console.WriteLine("  Ctrl+A, N    Next window");
-        Console.WriteLine("  Ctrl+A, P    Previous window");
-        Console.WriteLine("  Ctrl+A, W    List windows");
-        Console.WriteLine("  Ctrl+A, 0-9  Switch to window N");
-        Console.WriteLine("  Ctrl+A, A    Send Ctrl+A");
-        Console.WriteLine("  Ctrl+A, ?    Show this help");
-        Console.WriteLine("------------------------------\r\n");
+        Console.WriteLine("  Ctrl+A, D      Detach from session");
+        Console.WriteLine("  Ctrl+A, K      Kill current window");
+        Console.WriteLine("  Ctrl+A, C      Create new window");
+        Console.WriteLine("  Ctrl+A, N      Next window");
+        Console.WriteLine("  Ctrl+A, P      Previous window");
+        Console.WriteLine("  Ctrl+A, W      List windows");
+        Console.WriteLine("  Ctrl+A, 0-9    Switch to window N");
+        Console.WriteLine("  Ctrl+A, Shift+A  Rename current window");
+        Console.WriteLine("  Ctrl+A, A      Send Ctrl+A");
+        Console.WriteLine("  Ctrl+A, ?      Show this help");
+        Console.WriteLine("--------------------------------\r\n");
     }
 
     private static void ShowWindowList(List<WindowInfo> windows, int activeIndex)

@@ -383,6 +383,25 @@ public sealed class Session : IDisposable
     }
 
     /// <summary>
+    /// 윈도우 이름 변경
+    /// </summary>
+    public bool RenameWindow(int index, string newName)
+    {
+        lock (_windowsLock)
+        {
+            var window = _windows.FirstOrDefault(w => w.Index == index);
+            if (window == null)
+            {
+                return false;
+            }
+
+            window.Name = newName;
+            Console.WriteLine($"[Session {Id[..8]}] Renamed window {index} to '{newName}'");
+            return true;
+        }
+    }
+
+    /// <summary>
     /// 현재 스크롤백 버퍼 내용 가져오기 (활성 윈도우)
     /// </summary>
     public byte[] GetScrollbackBuffer()

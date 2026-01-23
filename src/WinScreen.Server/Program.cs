@@ -291,6 +291,10 @@ class ClientHandler
                 case ListWindowsMessage:
                     await HandleListWindows(ct);
                     break;
+
+                case RenameWindowMessage renameWindow:
+                    await HandleRenameWindow(renameWindow, ct);
+                    break;
             }
         }
         catch (Exception ex)
@@ -694,6 +698,31 @@ class ClientHandler
         {
             Windows = windows,
             ActiveWindowIndex = _attachedSession.ActiveWindowIndex
+        }, ct);
+    }
+
+    private async Task HandleRenameWindow(RenameWindowMessage msg, CancellationToken ct)
+    {
+        if (_attachedSession == null)
+        {
+            await SendAsync(new ErrorMessage { Message = "Not attached to any session" }, ct);
+            return;
+        }
+
+        var windowIndex = msg.WindowIndex ?? _attachedSession.ActiveWindowIndex;
+
+        if (!_attachedSession.RenameWindow(windowIndex, msg.NewName))
+        {
+            await SendAsync(new ErrorMessage { Message = $"Window {windowIndex} not found" }, ct);
+            return;
+        }
+
+        Console.WriteLine($"[{_clientId[..8]}] Renamed window {windowIndex} to '{msg.NewName}'");
+
+        await SendAsync(new WindowRenamedMessage
+        {
+            WindowIndex = windowIndex,
+            NewName = msg.NewName
         }, ct);
     }
 
