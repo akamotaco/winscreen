@@ -48,7 +48,8 @@ class ScreenClient
         var winscreenEnv = Environment.GetEnvironmentVariable("WINSCREEN");
         if (!string.IsNullOrEmpty(winscreenEnv) && !parsed.ForceNewSession)
         {
-            // nested session에서 허용되는 명령 (ServerStop은 제외 - 실수 방지)
+            // nested session에서 허용되는 명령
+            // ServerStop, KillAll 등 위험한 명령은 제외 - 자기 세션을 죽이는 실수 방지
             var allowedCommands = new[]
             {
                 Command.List, Command.ListProfiles, Command.Help,
@@ -56,15 +57,7 @@ class ScreenClient
                 Command.ProfileShow, Command.GetDefault
             };
 
-            if (!allowedCommands.Contains(parsed.Command) && parsed.Command != Command.None)
-            {
-                // 명령이 지정되지 않은 경우 (screen만 실행)도 에러
-            }
-            else if (allowedCommands.Contains(parsed.Command))
-            {
-                // 허용된 명령은 그대로 진행
-            }
-            else
+            if (!allowedCommands.Contains(parsed.Command))
             {
                 Console.Error.WriteLine("Warning: Already inside a WinScreen session.");
                 Console.Error.WriteLine($"  Current session: {winscreenEnv}");
@@ -883,11 +876,14 @@ class ScreenClient
                             break;
 
                         case WindowEndedMessage windowEnded:
-                            Console.Write($"\r\n[Window {windowEnded.WindowIndex} ended with exit code {windowEnded.ExitCode}]\r\n");
-                            if (windowEnded.NewActiveWindowIndex != null)
-                            {
-                                Console.Write($"[Switched to window {windowEnded.NewActiveWindowIndex}]\r\n");
-                            }
+                            // NOTE: 직접 콘솔 출력 비활성화 - 커서 위치 불일치 방지
+                            // 윈도우 종료 후 다른 윈도우로 전환되면 세션이 계속되므로,
+                            // 여기서 출력하면 cmd.exe가 인식하지 못해 커서 위치 불일치 발생.
+                            // Console.Write($"\r\n[Window {windowEnded.WindowIndex} ended with exit code {windowEnded.ExitCode}]\r\n");
+                            // if (windowEnded.NewActiveWindowIndex != null)
+                            // {
+                            //     Console.Write($"[Switched to window {windowEnded.NewActiveWindowIndex}]\r\n");
+                            // }
                             break;
 
                         case WindowListMessage windowList:
@@ -895,15 +891,21 @@ class ScreenClient
                             break;
 
                         case WindowCreatedMessage created:
-                            Console.Write($"\r\n[Created window {created.Window.Index}: {created.Window.Name}]\r\n");
+                            // NOTE: 직접 콘솔 출력 비활성화
+                            // GNU Screen(Linux)은 PTY를 완전히 제어하여 쉘과 독립적으로 화면 출력 가능.
+                            // 반면 WinScreen(Windows ConPTY)은 cmd.exe가 자체 커서 위치를 추적하므로,
+                            // 클라이언트가 직접 출력하면 cmd.exe가 인식하지 못해 커서 위치 불일치 발생.
+                            // Console.Write($"\r\n[Created window {created.Window.Index}: {created.Window.Name}]\r\n");
                             break;
 
                         case WindowRenamedMessage renamed:
-                            Console.Write($"\r\n[Window {renamed.WindowIndex} renamed to '{renamed.NewName}']\r\n");
+                            // NOTE: 커서 위치 불일치 방지를 위해 비활성화 (위 주석 참조)
+                            // Console.Write($"\r\n[Window {renamed.WindowIndex} renamed to '{renamed.NewName}']\r\n");
                             break;
 
                         case SessionRenamedMessage sessionRenamed:
-                            Console.Write($"\r\n[Session renamed to '{sessionRenamed.NewName}']\r\n");
+                            // NOTE: 커서 위치 불일치 방지를 위해 비활성화 (위 주석 참조)
+                            // Console.Write($"\r\n[Session renamed to '{sessionRenamed.NewName}']\r\n");
                             break;
                     }
                 }
@@ -1163,7 +1165,11 @@ class ScreenClient
 
     private static string? ReadName(string prompt)
     {
-        Console.Write($"\r\n{prompt}");
+        // 대체 화면 버퍼로 전환
+        Console.Write("\x1b[?1049h");  // Switch to alternate screen buffer
+        Console.Write("\x1b[H");       // Move cursor to home
+        Console.Write(prompt);
+
         var name = new System.Text.StringBuilder();
 
         while (true)
@@ -1172,13 +1178,15 @@ class ScreenClient
 
             if (key.Key == ConsoleKey.Enter)
             {
-                Console.WriteLine();
+                // 원래 화면 버퍼로 복귀
+                Console.Write("\x1b[?1049l");
                 return name.Length > 0 ? name.ToString() : null;
             }
 
             if (key.Key == ConsoleKey.Escape)
             {
-                Console.WriteLine("\r\n[Cancelled]");
+                // 원래 화면 버퍼로 복귀
+                Console.Write("\x1b[?1049l");
                 return null;
             }
 
@@ -1202,7 +1210,11 @@ class ScreenClient
 
     private static void ShowTerminalHelp()
     {
-        Console.WriteLine("\r\n--- WinScreen Key Bindings ---");
+        // 대체 화면 버퍼로 전환
+        Console.Write("\x1b[?1049h");  // Switch to alternate screen buffer
+        Console.Write("\x1b[H");       // Move cursor to home
+
+        Console.WriteLine("--- WinScreen Key Bindings ---");
         Console.WriteLine("  Ctrl+A, D      Detach from session");
         Console.WriteLine("  Ctrl+A, K      Kill current window");
         Console.WriteLine("  Ctrl+A, C      Create new window");
@@ -1214,18 +1226,38 @@ class ScreenClient
         Console.WriteLine("  Ctrl+A, $      Rename session");
         Console.WriteLine("  Ctrl+A, A      Send Ctrl+A");
         Console.WriteLine("  Ctrl+A, ?      Show this help");
-        Console.WriteLine("--------------------------------\r\n");
+        Console.WriteLine("--------------------------------");
+        Console.WriteLine();
+        Console.WriteLine("Press any key to continue...");
+
+        Console.ReadKey(intercept: true);
+
+        // 원래 화면 버퍼로 복귀
+        Console.Write("\x1b[?1049l");  // Switch back to main screen buffer
     }
 
     private static void ShowWindowList(List<WindowInfo> windows, int activeIndex)
     {
-        Console.Write("\r\n--- Windows ---\r\n");
+        // 대체 화면 버퍼로 전환 (vim, less 등과 같은 방식)
+        // 이렇게 하면 cmd.exe의 화면 상태를 건드리지 않음
+        Console.Write("\x1b[?1049h");  // Switch to alternate screen buffer
+        Console.Write("\x1b[H");       // Move cursor to home
+
+        Console.WriteLine("--- Windows ---");
         foreach (var w in windows)
         {
             var marker = w.Index == activeIndex ? "*" : " ";
-            Console.Write($" {marker}{w.Index} {w.Name}\r\n");
+            Console.WriteLine($" {marker}{w.Index} {w.Name}");
         }
-        Console.Write("---------------\r\n");
+        Console.WriteLine("---------------");
+        Console.WriteLine();
+        Console.WriteLine("Press any key to continue...");
+
+        // 아무 키나 기다림
+        Console.ReadKey(intercept: true);
+
+        // 원래 화면 버퍼로 복귀
+        Console.Write("\x1b[?1049l");  // Switch back to main screen buffer
     }
 
     private async Task<int> DetachSession(string? sessionId)

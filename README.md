@@ -7,6 +7,8 @@ Windows용 GNU Screen 스타일 터미널 멀티플렉서
 WinScreen은 Linux의 `screen` 명령어와 유사한 UX를 Windows에서 제공합니다.
 세션을 생성하고, detach하고, 나중에 다른 터미널에서 다시 attach할 수 있습니다.
 
+> **Note**: 이 프로젝트는 AI(Claude)의 도움을 받아 개발되었습니다.
+
 ## 특징
 
 - **screen 스타일 UX**: `-r`로 세션 선택, `Ctrl+A, D`로 detach
@@ -386,6 +388,9 @@ screen --profile-reset
   - `profiles.json`에서 `maxScrollbackSizeKB` 값 변경 가능
   - 긴 출력이 있는 세션에서 re-attach 시 최근 내용만 복원됩니다
   - 중요한 출력은 파일로 리다이렉트하세요: `command > output.log`
+- **ConPTY 아키텍처 차이**: GNU Screen(Linux)은 PTY를 완전히 제어하여 쉘과 독립적으로 화면 출력이 가능하지만, WinScreen(Windows ConPTY)은 cmd.exe가 자체적으로 커서 위치를 추적합니다
+  - 이로 인해 윈도우 목록(`Ctrl+a w`), 도움말(`Ctrl+a ?`), 이름 변경 등의 UI는 대체 화면 버퍼를 사용합니다
+  - 일부 상태 메시지(윈도우 생성/종료/이름 변경 알림)는 커서 위치 불일치 방지를 위해 표시되지 않습니다
 
 ## 주의사항
 
@@ -394,6 +399,8 @@ screen --profile-reset
   - `screen --server-stop` 전에 세션을 확인하세요
 - **Nested Session**: 이미 screen 세션 안에서 `screen`을 실행하면 경고가 표시됩니다
   - `screen -m` 옵션으로 강제로 새 세션을 생성할 수 있습니다
+  - 세션 내에서 `screen -X kill-all`, `screen --server-stop` 등 위험한 명령은 차단됩니다
+  - `screen -ls`, `screen --profiles` 등 읽기 전용 명령은 허용됩니다
 - **세션 이름 중복**: 같은 이름의 세션을 생성하면 경고가 표시됩니다
   - 세션은 생성되지만 `-r` 사용 시 ID로 구분해야 할 수 있습니다
 
