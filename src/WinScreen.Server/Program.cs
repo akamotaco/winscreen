@@ -283,6 +283,14 @@ class ClientHandler
         var profile = _profileStore.GetOrDefault(msg.ProfileName);
         var workingDir = msg.WorkingDirectory ?? profile.WorkingDirectory ?? Environment.CurrentDirectory;
 
+        // 세션 이름 중복 확인
+        string? warning = null;
+        if (!string.IsNullOrEmpty(msg.SessionName) && _sessionManager.ExistsByName(msg.SessionName))
+        {
+            warning = $"Warning: Session name '{msg.SessionName}' already exists. Creating with duplicate name.";
+            Console.WriteLine($"[{_clientId[..8]}] {warning}");
+        }
+
         var session = _sessionManager.Create(
             msg.SessionName,
             profile.GetCommandLine(),
@@ -290,11 +298,12 @@ class ClientHandler
             profile.Name,
             profile.Environment,
             msg.Cols,
-            msg.Rows);
+            msg.Rows,
+            _profileStore.MaxScrollbackSize);
 
         Console.WriteLine($"[{_clientId[..8]}] Created session: {session.Name} ({session.Id[..8]})");
-        
-        await SendAsync(new SessionCreatedMessage { Session = session.ToInfo() }, ct);
+
+        await SendAsync(new SessionCreatedMessage { Session = session.ToInfo(), Warning = warning }, ct);
     }
 
     private async Task HandleAttach(AttachMessage msg, CancellationToken ct)

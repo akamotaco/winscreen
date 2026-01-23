@@ -78,6 +78,8 @@ internal class ProfileConfig
 {
     public string DefaultProfile { get; set; } = "cmd";
     public List<Profile> Profiles { get; set; } = new();
+    /// <summary>스크롤백 버퍼 최대 크기 (KB). 기본 1024KB (1MB)</summary>
+    public int MaxScrollbackSizeKB { get; set; } = 1024;
 }
 
 /// <summary>
@@ -88,6 +90,10 @@ public class ProfileStore
     private readonly string _configPath;
     private Dictionary<string, Profile> _profiles = new(StringComparer.OrdinalIgnoreCase);
     private string _defaultProfileName = "cmd";
+    private int _maxScrollbackSizeKB = 1024; // 1MB default
+
+    /// <summary>스크롤백 버퍼 최대 크기 (바이트)</summary>
+    public int MaxScrollbackSize => _maxScrollbackSizeKB * 1024;
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -137,6 +143,7 @@ public class ProfileStore
             {
                 _profiles = config.Profiles.ToDictionary(p => p.Name, StringComparer.OrdinalIgnoreCase);
                 _defaultProfileName = config.DefaultProfile ?? "cmd";
+                _maxScrollbackSizeKB = config.MaxScrollbackSizeKB > 0 ? config.MaxScrollbackSizeKB : 1024;
 
                 // 기본 프로필이 존재하지 않으면 첫 번째 프로필을 기본으로
                 if (!_profiles.ContainsKey(_defaultProfileName) && _profiles.Count > 0)
@@ -189,7 +196,8 @@ public class ProfileStore
         var config = new ProfileConfig
         {
             DefaultProfile = _defaultProfileName,
-            Profiles = _profiles.Values.ToList()
+            Profiles = _profiles.Values.ToList(),
+            MaxScrollbackSizeKB = _maxScrollbackSizeKB
         };
         var json = JsonSerializer.Serialize(config, JsonOptions);
         File.WriteAllText(_configPath, json);

@@ -216,6 +216,8 @@ public class SessionCreatedMessage : ServerMessage
 {
     public override ServerMessageType Type => ServerMessageType.SessionCreated;
     public required SessionInfo Session { get; set; }
+    /// <summary>세션 생성 시 경고 (예: 이름 중복)</summary>
+    public string? Warning { get; set; }
 }
 
 public class AttachedMessage : ServerMessage

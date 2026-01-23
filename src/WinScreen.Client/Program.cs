@@ -635,6 +635,12 @@ class ScreenClient
 
             if (response is SessionCreatedMessage created)
             {
+                // 경고가 있으면 표시
+                if (!string.IsNullOrEmpty(created.Warning))
+                {
+                    Console.Error.WriteLine(created.Warning);
+                }
+
                 // 세션 생성 완료 - ConPTY 초기화 대기 후 attach
                 await Task.Delay(50);
                 return await AttachToSessionInternal(created.Session.Id);

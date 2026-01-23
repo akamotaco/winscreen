@@ -10,8 +10,8 @@ namespace WinScreen.Core.Sessions;
 /// </summary>
 public sealed class Session : IDisposable
 {
-    private const int MaxScrollbackSize = 1024 * 1024; // 1MB
-    
+    private const int DefaultMaxScrollbackSize = 1024 * 1024; // 1MB default
+
     private readonly ConPty _pty;
     private readonly CancellationTokenSource _cts = new();
     private readonly MemoryStream _scrollbackBuffer = new();
@@ -19,7 +19,8 @@ public sealed class Session : IDisposable
     private readonly object _attachLock = new();
     private readonly FileStream _inputStream;
     private readonly FileStream _outputStream;
-    
+    private readonly int _maxScrollbackSize;
+
     private Task? _readTask;
     private bool _disposed;
 
@@ -43,11 +44,12 @@ public sealed class Session : IDisposable
     public event Action<int>? SessionEnded;
 
     private Session(
-        string id, 
-        string name, 
-        ConPty pty, 
+        string id,
+        string name,
+        ConPty pty,
         string? workingDirectory,
-        string? profileName)
+        string? profileName,
+        int maxScrollbackSize)
     {
         Id = id;
         Name = name;
@@ -55,6 +57,7 @@ public sealed class Session : IDisposable
         CreatedAt = DateTime.UtcNow;
         WorkingDirectory = workingDirectory;
         ProfileName = profileName;
+        _maxScrollbackSize = maxScrollbackSize > 0 ? maxScrollbackSize : DefaultMaxScrollbackSize;
 
         // 파이프 스트림 생성 (anonymous pipe는 overlapped I/O 미지원)
         _inputStream = new FileStream(_pty.PipeIn!, FileAccess.Write, 4096, false);
@@ -64,6 +67,7 @@ public sealed class Session : IDisposable
     /// <summary>
     /// 새 세션 생성
     /// </summary>
+    /// <param name="maxScrollbackSize">스크롤백 버퍼 최대 크기 (바이트). 0이면 기본값 1MB</param>
     public static Session Create(
         string? name,
         string commandLine,
@@ -71,7 +75,8 @@ public sealed class Session : IDisposable
         string? profileName = null,
         Dictionary<string, string>? environment = null,
         short cols = 120,
-        short rows = 30)
+        short rows = 30,
+        int maxScrollbackSize = 0)
     {
         var id = GenerateId();
         name ??= $"session-{id[..8]}";
@@ -89,7 +94,7 @@ public sealed class Session : IDisposable
             cols,
             rows);
 
-        var session = new Session(id, name, pty, workingDirectory, profileName);
+        var session = new Session(id, name, pty, workingDirectory, profileName, maxScrollbackSize);
         session.StartReading();
         return session;
     }
@@ -163,9 +168,9 @@ public sealed class Session : IDisposable
         lock (_scrollbackLock)
         {
             // 버퍼가 너무 크면 앞부분 제거
-            if (_scrollbackBuffer.Length + data.Length > MaxScrollbackSize)
+            if (_scrollbackBuffer.Length + data.Length > _maxScrollbackSize)
             {
-                var excess = (int)(_scrollbackBuffer.Length + data.Length - MaxScrollbackSize);
+                var excess = (int)(_scrollbackBuffer.Length + data.Length - _maxScrollbackSize);
                 var existing = _scrollbackBuffer.ToArray();
                 _scrollbackBuffer.SetLength(0);
                 _scrollbackBuffer.Write(existing, excess, existing.Length - excess);
@@ -323,9 +328,10 @@ public class SessionManager : IDisposable
         string? profileName = null,
         Dictionary<string, string>? environment = null,
         short cols = 120,
-        short rows = 30)
+        short rows = 30,
+        int maxScrollbackSize = 0)
     {
-        var session = Session.Create(name, commandLine, workingDirectory, profileName, environment, cols, rows);
+        var session = Session.Create(name, commandLine, workingDirectory, profileName, environment, cols, rows, maxScrollbackSize);
         
         session.SessionEnded += exitCode =>
         {
@@ -343,8 +349,14 @@ public class SessionManager : IDisposable
         _sessions.TryGetValue(id, out var session) ? session : null;
 
     public Session? GetByName(string name) =>
-        _sessions.Values.FirstOrDefault(s => 
+        _sessions.Values.FirstOrDefault(s =>
             s.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// 지정한 이름을 가진 세션이 존재하는지 확인
+    /// </summary>
+    public bool ExistsByName(string name) =>
+        _sessions.Values.Any(s => s.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
 
     public IEnumerable<Session> GetAll() => _sessions.Values;
 

@@ -242,6 +242,7 @@ screen --profile-reset
 ```json
 {
   "defaultProfile": "cmd",
+  "maxScrollbackSizeKB": 2048,
   "profiles": [
     {
       "name": "cmd",
@@ -263,13 +264,19 @@ screen --profile-reset
 }
 ```
 
+| 설정 | 기본값 | 설명 |
+|------|--------|------|
+| `defaultProfile` | `"cmd"` | 기본 프로필 이름 |
+| `maxScrollbackSizeKB` | `1024` | 스크롤백 버퍼 최대 크기 (KB) |
+
 ## 제한사항
 
 - Windows 10 1809 이상 필요 (ConPTY API)
 - 한 번에 하나의 클라이언트만 세션에 연결 가능
 - 프로세스 fork가 불가능하므로 Linux screen의 일부 기능 미지원
-- 스크롤백 버퍼: 최대 1MB
-  - 긴 출력이 있는 세션에서 re-attach 시 최근 1MB만 복원됩니다
+- 스크롤백 버퍼: 기본 1MB (설정 가능)
+  - `profiles.json`에서 `maxScrollbackSizeKB` 값 변경 가능
+  - 긴 출력이 있는 세션에서 re-attach 시 최근 내용만 복원됩니다
   - 중요한 출력은 파일로 리다이렉트하세요: `command > output.log`
 
 ## 주의사항
@@ -279,6 +286,8 @@ screen --profile-reset
   - `screen --server-stop` 전에 세션을 확인하세요
 - **Nested Session**: 이미 screen 세션 안에서 `screen`을 실행하면 경고가 표시됩니다
   - `screen -m` 옵션으로 강제로 새 세션을 생성할 수 있습니다
+- **세션 이름 중복**: 같은 이름의 세션을 생성하면 경고가 표시됩니다
+  - 세션은 생성되지만 `-r` 사용 시 ID로 구분해야 할 수 있습니다
 
 ## 트러블슈팅
 
