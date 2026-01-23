@@ -501,6 +501,8 @@ C:\Windows\SystemApps\MicrosoftWindows.Client.CBS_cw5n1h2txyewy>
    - Running `screen` from cmd, PowerShell, Windows Terminal works correctly
    - Same pattern as most console app usage
 
+> **Note**: Commands like `screen -ls` work normally inside sessions. WinScreen automatically adds the client path to the session's PATH.
+
 ### Server Won't Start
 
 - Verify `winscreen-server.exe` is in the same folder

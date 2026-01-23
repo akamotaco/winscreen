@@ -485,19 +485,19 @@ Windows 검색(Win 키)에서 `screen`을 직접 실행하면 작업 디렉토�
 C:\Windows\SystemApps\MicrosoftWindows.Client.CBS_cw5n1h2txyewy>
 ```
 
-**원인**: Windows 검색에서 실행하면 `explorer.exe`가 부모 프로세스가 되어 작업 디렉토리가 예측 불가능하게 설정됩니다. 이는 콘솔 앱을 검색에서 직접 실행하는 특수한 케이스입니다.
+**원인**: Windows 검색에서 실행하면 `explorer.exe`가 부모 프로세스가 되어 작업 디렉토리가 예측 불가능하게 설정됩니다.
 
-**해결 방법**:
+> **Note**: 세션 내에서 `screen -ls` 등의 명령어는 정상 작동합니다. WinScreen이 자동으로 클라이언트 경로를 세션의 PATH에 추가하기 때문입니다.
+
+**작업 디렉토리를 변경하려면**:
 
 1. **바로가기(.lnk) 만들기** (권장)
    - `screen.exe` 우클릭 → 바로 가기 만들기
    - 바로가기 우클릭 → 속성 → **시작 위치**를 `%USERPROFILE%`로 설정
    - 바로가기를 시작 메뉴 폴더에 복사: `%APPDATA%\Microsoft\Windows\Start Menu\Programs`
-   - 이제 Windows 검색에서 실행해도 홈 디렉토리에서 시작
 
 2. **cmd/터미널에서 실행**
    - cmd, PowerShell, Windows Terminal 등에서 `screen`을 실행하면 정상 작동
-   - 대부분의 콘솔 앱 사용 패턴과 동일
 
 ### 서버가 시작되지 않음
 
