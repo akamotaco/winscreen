@@ -288,9 +288,22 @@ screen -S mywork
 | `cmd` | Windows 명령 프롬프트 (기본) |
 | `powershell` | Windows PowerShell |
 | `pwsh` | PowerShell Core |
-| `conda` | Miniconda/Anaconda (자동 감지) |
+| `conda` | Miniconda/Miniforge/Anaconda (자동 감지) |
 | `gitbash` | Git Bash (자동 감지) |
-| `wsl` | Windows Subsystem for Linux |
+| `wsl` | Windows Subsystem for Linux (자동 감지) |
+
+### 자동 탐지 경로
+
+WinScreen은 첫 실행 시 또는 `screen --profile-reset` 실행 시 다음 경로에서 프로필을 자동 탐지합니다:
+
+| 프로필 | 탐지 경로 |
+|--------|----------|
+| `conda` | `%USERPROFILE%\miniconda3`, `%USERPROFILE%\miniforge3`, `%USERPROFILE%\anaconda3`, `C:\ProgramData\miniconda3`, `C:\ProgramData\miniforge3`, `C:\ProgramData\anaconda3` |
+| `gitbash` | `C:\Program Files\Git\bin\bash.exe`, `C:\Program Files (x86)\Git\bin\bash.exe` |
+| `wsl` | `C:\Windows\System32\wsl.exe` |
+
+> **Note**: 자동 탐지는 `profiles.json`이 없거나 초기화할 때만 실행됩니다. 이미 프로필이 있으면 탐지하지 않습니다.
+> 다른 경로에 설치된 경우 수동으로 프로필을 추가하세요.
 
 ### 기본 프로필 설정
 

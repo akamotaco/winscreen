@@ -230,12 +230,14 @@ public class ProfileStore
             }
         };
 
-        // Miniconda 감지
+        // Conda/Miniconda/Miniforge 감지
         var condaPaths = new[]
         {
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "miniconda3"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "miniforge3"),
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "anaconda3"),
             @"C:\ProgramData\miniconda3",
+            @"C:\ProgramData\miniforge3",
             @"C:\ProgramData\anaconda3"
         };
 

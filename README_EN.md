@@ -290,9 +290,22 @@ Profiles are stored in `%LOCALAPPDATA%\WinScreen\profiles.json`.
 | `cmd` | Windows Command Prompt (default) |
 | `powershell` | Windows PowerShell |
 | `pwsh` | PowerShell Core |
-| `conda` | Miniconda/Anaconda (auto-detected) |
+| `conda` | Miniconda/Miniforge/Anaconda (auto-detected) |
 | `gitbash` | Git Bash (auto-detected) |
-| `wsl` | Windows Subsystem for Linux |
+| `wsl` | Windows Subsystem for Linux (auto-detected) |
+
+### Auto-Detection Paths
+
+WinScreen auto-detects profiles from the following paths on first run or when running `screen --profile-reset`:
+
+| Profile | Detection Paths |
+|---------|-----------------|
+| `conda` | `%USERPROFILE%\miniconda3`, `%USERPROFILE%\miniforge3`, `%USERPROFILE%\anaconda3`, `C:\ProgramData\miniconda3`, `C:\ProgramData\miniforge3`, `C:\ProgramData\anaconda3` |
+| `gitbash` | `C:\Program Files\Git\bin\bash.exe`, `C:\Program Files (x86)\Git\bin\bash.exe` |
+| `wsl` | `C:\Windows\System32\wsl.exe` |
+
+> **Note**: Auto-detection only runs when `profiles.json` doesn't exist or is reset. If profiles already exist, detection is skipped.
+> For installations in other paths, add profiles manually.
 
 ### Default Profile Setting
 
