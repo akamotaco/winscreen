@@ -145,6 +145,8 @@ public class CreateSessionMessage : ClientMessage
     public short Cols { get; set; } = 80;
     /// <summary>세션 시작 시 실행할 명령어 (예: screen -d -m python server.py)</summary>
     public string? InitialCommand { get; set; }
+    /// <summary>클라이언트 실행 파일 경로 (세션 PATH에 추가용)</summary>
+    public string? ClientExecutablePath { get; set; }
 }
 
 public class AttachMessage : ClientMessage

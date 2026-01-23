@@ -628,7 +628,8 @@ class ScreenClient
                 ProfileName = args.Profile,
                 WorkingDirectory = args.WorkingDirectory ?? Environment.CurrentDirectory,
                 Cols = (short)Console.WindowWidth,
-                Rows = (short)Console.WindowHeight
+                Rows = (short)Console.WindowHeight,
+                ClientExecutablePath = AppDomain.CurrentDomain.BaseDirectory
             };
 
             await ProtocolSerializer.SendAsync(_pipe!, createMsg, _cts.Token);
@@ -674,7 +675,8 @@ class ScreenClient
                 WorkingDirectory = args.WorkingDirectory ?? Environment.CurrentDirectory,
                 Cols = 120,  // 기본 크기 사용 (attach 안 하므로)
                 Rows = 30,
-                InitialCommand = args.InitialCommand
+                InitialCommand = args.InitialCommand,
+                ClientExecutablePath = AppDomain.CurrentDomain.BaseDirectory
             };
 
             await ProtocolSerializer.SendAsync(_pipe!, createMsg, _cts.Token);

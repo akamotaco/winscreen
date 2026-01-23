@@ -334,12 +334,28 @@ class ClientHandler
             sessionName = uniqueName;
         }
 
+        // 환경 변수 준비: 클라이언트 실행 파일 경로를 PATH에 추가
+        var environment = profile.Environment != null
+            ? new Dictionary<string, string>(profile.Environment)
+            : new Dictionary<string, string>();
+
+        if (!string.IsNullOrEmpty(msg.ClientExecutablePath))
+        {
+            var currentPath = Environment.GetEnvironmentVariable("PATH") ?? "";
+            // 클라이언트 경로가 PATH에 없으면 앞에 추가
+            if (!currentPath.Split(';').Any(p => p.Equals(msg.ClientExecutablePath.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase)))
+            {
+                environment["PATH"] = msg.ClientExecutablePath.TrimEnd('\\') + ";" + currentPath;
+                Console.WriteLine($"[{_clientId[..8]}] Added client path to PATH: {msg.ClientExecutablePath}");
+            }
+        }
+
         var session = _sessionManager.Create(
             sessionName,
             profile.GetCommandLine(),
             workingDir,
             profile.Name,
-            profile.Environment,
+            environment.Count > 0 ? environment : null,
             msg.Cols,
             msg.Rows,
             _profileStore.MaxScrollbackSize);

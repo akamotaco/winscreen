@@ -2,6 +2,26 @@
 
 Windows용 GNU Screen 스타일 터미널 멀티플렉서
 
+한국어 | **[English](README_EN.md)**
+
+---
+
+## 목차
+
+- [개요](#개요)
+- [특징](#특징)
+- [아키텍처](#아키텍처)
+- [빌드](#빌드)
+- [사용법](#사용법)
+- [프로필](#프로필)
+- [GNU Screen과 비교](#gnu-screen과-비교)
+- [제한사항](#제한사항)
+- [주의사항](#주의사항)
+- [트러블슈팅](#트러블슈팅)
+- [라이선스](#라이선스)
+
+---
+
 ## 개요
 
 WinScreen은 Linux의 `screen` 명령어와 유사한 UX를 Windows에서 제공합니다.
@@ -444,12 +464,36 @@ screen --profile-reset
 
 ## 트러블슈팅
 
+### Windows 검색에서 실행 시 작업 디렉토리가 이상함
+
+Windows 검색(Win 키)에서 `screen`을 직접 실행하면 작업 디렉토리가 시스템 폴더로 설정될 수 있습니다:
+
+```
+C:\Windows\SystemApps\MicrosoftWindows.Client.CBS_cw5n1h2txyewy>
+```
+
+**원인**: Windows 검색에서 실행하면 `explorer.exe`가 부모 프로세스가 되어 작업 디렉토리가 예측 불가능하게 설정됩니다. 이는 콘솔 앱을 검색에서 직접 실행하는 특수한 케이스입니다.
+
+**해결 방법**:
+
+1. **바로가기(.lnk) 만들기** (권장)
+   - `screen.exe` 우클릭 → 바로 가기 만들기
+   - 바로가기 우클릭 → 속성 → **시작 위치**를 `%USERPROFILE%`로 설정
+   - 바로가기를 시작 메뉴 폴더에 복사: `%APPDATA%\Microsoft\Windows\Start Menu\Programs`
+   - 이제 Windows 검색에서 실행해도 홈 디렉토리에서 시작
+
+2. **cmd/터미널에서 실행**
+   - cmd, PowerShell, Windows Terminal 등에서 `screen`을 실행하면 정상 작동
+   - 대부분의 콘솔 앱 사용 패턴과 동일
+
 ### 서버가 시작되지 않음
+
 - `winscreen-server.exe`가 같은 폴더에 있는지 확인
 - `screen --server`로 서버 상태 확인
 - 관리자 권한이 필요할 수 있음
 
 ### 세션이 즉시 종료됨
+
 - 프로필의 shell 경로가 올바른지 확인
 - `screen --profiles`로 감지된 프로필 확인
 
