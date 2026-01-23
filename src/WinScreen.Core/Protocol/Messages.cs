@@ -349,7 +349,15 @@ public static class ProtocolSerializer
             totalRead += read;
         }
 
-        return JsonSerializer.Deserialize<T>(jsonBuffer, Options);
+        try
+        {
+            return JsonSerializer.Deserialize<T>(jsonBuffer, Options);
+        }
+        catch (JsonException ex)
+        {
+            Console.Error.WriteLine($"Protocol error: Failed to deserialize message - {ex.Message}");
+            return default;
+        }
     }
 
     public static async Task SendAsync<T>(Stream stream, T message, CancellationToken ct = default)

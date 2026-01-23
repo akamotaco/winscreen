@@ -226,6 +226,11 @@ screen --profile-reset
 | `--startup <cmd>` | 시작 시 실행할 명령어 |
 | `--desc <text>` | 프로필 설명 |
 
+> **Conda/Miniconda 사용자 참고**: `cmd.exe`에서 `conda activate`를 사용하려면
+> `--args "/K"` 옵션이 필요합니다. `/K` 옵션은 명령 실행 후 쉘을 유지합니다.
+>
+> 예시: `screen --profile-add myconda --shell cmd.exe --args "/K" --startup "conda activate myenv"`
+
 ### JSON으로 프로필 편집
 
 `profiles.json`을 직접 편집하여 더 복잡한 프로필을 추가할 수 있습니다:
@@ -259,6 +264,17 @@ screen --profile-reset
 - Windows 10 1809 이상 필요 (ConPTY API)
 - 한 번에 하나의 클라이언트만 세션에 연결 가능
 - 프로세스 fork가 불가능하므로 Linux screen의 일부 기능 미지원
+- 스크롤백 버퍼: 최대 1MB
+  - 긴 출력이 있는 세션에서 re-attach 시 최근 1MB만 복원됩니다
+  - 중요한 출력은 파일로 리다이렉트하세요: `command > output.log`
+
+## 주의사항
+
+- **서버 종료 시 세션 손실**: WinScreen 서버가 종료되면 모든 세션이 함께 종료됩니다
+  - 중요한 작업은 정기적으로 저장하세요
+  - `screen --server-stop` 전에 세션을 확인하세요
+- **Nested Session**: 이미 screen 세션 안에서 `screen`을 실행하면 경고가 표시됩니다
+  - `screen -m` 옵션으로 강제로 새 세션을 생성할 수 있습니다
 
 ## 트러블슈팅
 

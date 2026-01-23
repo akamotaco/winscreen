@@ -477,24 +477,69 @@ class ClientHandler
         }
     }
 
-    private void OnSessionOutput(byte[] data)
+    private async void OnSessionOutput(byte[] data)
     {
-        _ = SendAsync(new OutputMessage { Data = data }, CancellationToken.None);
+        try
+        {
+            await SendAsync(new OutputMessage { Data = data }, CancellationToken.None);
+        }
+        catch (IOException)
+        {
+            // 파이프 끊김 - 정상적인 연결 해제
+        }
+        catch (ObjectDisposedException)
+        {
+            // 이미 dispose됨 - 무시
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[{_clientId[..8]}] Output send error: {ex.Message}");
+        }
     }
 
-    private void OnSessionEndedWhileAttached(int exitCode)
+    private async void OnSessionEndedWhileAttached(int exitCode)
     {
         if (_attachedSession == null) return;
-        
+
         var sessionId = _attachedSession.Id;
         _attachedSession = null;
-        
-        _ = SendAsync(new SessionEndedMessage { SessionId = sessionId, ExitCode = exitCode }, CancellationToken.None);
+
+        try
+        {
+            await SendAsync(new SessionEndedMessage { SessionId = sessionId, ExitCode = exitCode }, CancellationToken.None);
+        }
+        catch (IOException)
+        {
+            // 파이프 끊김 - 정상적인 연결 해제
+        }
+        catch (ObjectDisposedException)
+        {
+            // 이미 dispose됨 - 무시
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[{_clientId[..8]}] Session ended notification error: {ex.Message}");
+        }
     }
 
-    public void SendNotification(ServerMessage message)
+    public async void SendNotification(ServerMessage message)
     {
-        _ = SendAsync(message, CancellationToken.None);
+        try
+        {
+            await SendAsync(message, CancellationToken.None);
+        }
+        catch (IOException)
+        {
+            // 파이프 끊김 - 무시
+        }
+        catch (ObjectDisposedException)
+        {
+            // 이미 dispose됨 - 무시
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[{_clientId[..8]}] Notification send error: {ex.Message}");
+        }
     }
 
     private async Task SendAsync(ServerMessage message, CancellationToken ct)
