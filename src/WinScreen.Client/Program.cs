@@ -920,7 +920,13 @@ class ScreenClient
                             if (keyInfo.Key == ConsoleKey.D)
                             {
                                 await ProtocolSerializer.SendAsync(_pipe!, new DetachMessage(), _cts.Token);
-                                _isAttached = false;
+                                // readTask가 DetachedMessage를 받아 _isAttached = false로 설정할 때까지 대기
+                                // WhenAny에서 writeTask가 먼저 종료되면 _cts.Cancel()이 호출되어
+                                // readTask가 응답을 받기 전에 취소되는 것을 방지
+                                while (_isAttached && !_cts.Token.IsCancellationRequested)
+                                {
+                                    await Task.Delay(10, _cts.Token);
+                                }
                                 return;
                             }
 
@@ -933,7 +939,11 @@ class ScreenClient
                             if (keyInfo.Key == ConsoleKey.K)
                             {
                                 await ProtocolSerializer.SendAsync(_pipe!, new KillSessionMessage { SessionId = _attachedSessionId! }, _cts.Token);
-                                _isAttached = false;
+                                // readTask가 SessionEndedMessage를 받아 _isAttached = false로 설정할 때까지 대기
+                                while (_isAttached && !_cts.Token.IsCancellationRequested)
+                                {
+                                    await Task.Delay(10, _cts.Token);
+                                }
                                 return;
                             }
 
