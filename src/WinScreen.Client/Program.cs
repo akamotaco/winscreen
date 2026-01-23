@@ -36,6 +36,13 @@ class ScreenClient
     private bool _ctrlAPressed;
     private DateTime _ctrlAPressedTime;
 
+    // Overlay 상태 추적 (도움말, 이름 입력 등 표시 중일 때 백그라운드 출력 차단)
+    private volatile bool _overlayActive;
+    private readonly System.Collections.Concurrent.ConcurrentQueue<byte[]> _pendingOutput = new();
+
+    // Ctrl+C 요청 플래그 (CancelKeyPress에서 설정, 입력 루프에서 처리)
+    private volatile bool _ctrlCRequested;
+
     public async Task<int> RunAsync(string[] args)
     {
         var parsed = ParseArgs(args);
@@ -87,6 +94,7 @@ class ScreenClient
             Command.List => await ListSessions(),
             Command.ListProfiles => await ListProfiles(),
             Command.Create => await CreateAndAttach(parsed),
+            Command.CreateDetached => await CreateDetached(parsed),
             Command.Attach => await AttachToSession(parsed.SessionId, parsed.ForceDetach),
             Command.AttachOrCreate => await AttachOrCreate(parsed),
             Command.Detach => await DetachSession(parsed.SessionId),
@@ -654,6 +662,54 @@ class ScreenClient
         }
     }
 
+    private async Task<int> CreateDetached(ParsedArgs args)
+    {
+        try
+        {
+            // 세션 생성 (attach 없이)
+            var createMsg = new CreateSessionMessage
+            {
+                SessionName = args.SessionName,
+                ProfileName = args.Profile,
+                WorkingDirectory = args.WorkingDirectory ?? Environment.CurrentDirectory,
+                Cols = 120,  // 기본 크기 사용 (attach 안 하므로)
+                Rows = 30,
+                InitialCommand = args.InitialCommand
+            };
+
+            await ProtocolSerializer.SendAsync(_pipe!, createMsg, _cts.Token);
+            var response = await ProtocolSerializer.DeserializeAsync<ServerMessage>(_pipe!, _cts.Token);
+
+            if (response is SessionCreatedMessage created)
+            {
+                // 경고가 있으면 표시
+                if (!string.IsNullOrEmpty(created.Warning))
+                {
+                    Console.Error.WriteLine(created.Warning);
+                }
+
+                var displayName = string.IsNullOrEmpty(created.Session.Name)
+                    ? created.Session.Id
+                    : $"{created.Session.Name} ({created.Session.Id})";
+                Console.WriteLine($"[detached from {displayName}]");
+                return 0;
+            }
+
+            if (response is ErrorMessage error)
+            {
+                Console.Error.WriteLine($"Error: {error.Message}");
+                return 1;
+            }
+
+            return 1;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Error: {ex.Message}");
+            throw;
+        }
+    }
+
     private async Task<int> AttachOrCreate(ParsedArgs args)
     {
         // 세션 목록 가져오기
@@ -826,7 +882,8 @@ class ScreenClient
         Console.CancelKeyPress += (_, e) =>
         {
             e.Cancel = true;
-            // Ctrl+C는 터미널로 전달
+            // Ctrl+C 요청 플래그 설정 (입력 루프에서 처리)
+            _ctrlCRequested = true;
         };
 
         // 화면 클리어 후 스크롤백 버퍼 출력
@@ -850,8 +907,16 @@ class ScreenClient
                     switch (msg)
                     {
                         case OutputMessage output:
-                            var text = System.Text.Encoding.UTF8.GetString(output.Data);
-                            Console.Write(text);
+                            if (_overlayActive)
+                            {
+                                // Overlay 표시 중이면 버퍼에 저장
+                                _pendingOutput.Enqueue(output.Data);
+                            }
+                            else
+                            {
+                                var text = System.Text.Encoding.UTF8.GetString(output.Data);
+                                Console.Write(text);
+                            }
                             break;
 
                         case SessionEndedMessage ended:
@@ -928,6 +993,14 @@ class ScreenClient
 
                 while (_isAttached && !_cts.Token.IsCancellationRequested)
                 {
+                    // Ctrl+C 요청 처리 (CancelKeyPress 이벤트에서 설정됨)
+                    if (_ctrlCRequested)
+                    {
+                        _ctrlCRequested = false;
+                        await SendInput(new byte[] { 0x03 }); // Ctrl+C (ETX)
+                        continue;
+                    }
+
                     // Console.KeyAvailable로 블로킹 방지
                     if (!Console.KeyAvailable)
                     {
@@ -1163,77 +1236,104 @@ class ScreenClient
         return Array.Empty<byte>();
     }
 
-    private static string? ReadName(string prompt)
+    private string? ReadName(string prompt)
     {
-        // 대체 화면 버퍼로 전환
-        Console.Write("\x1b[?1049h");  // Switch to alternate screen buffer
-        Console.Write("\x1b[H");       // Move cursor to home
-        Console.Write(prompt);
-
-        var name = new System.Text.StringBuilder();
-
-        while (true)
+        _overlayActive = true;
+        try
         {
-            var key = Console.ReadKey(intercept: true);
+            // 대체 화면 버퍼로 전환
+            Console.Write("\x1b[?1049h");  // Switch to alternate screen buffer
+            Console.Write("\x1b[H");       // Move cursor to home
+            Console.Write(prompt);
 
-            if (key.Key == ConsoleKey.Enter)
-            {
-                // 원래 화면 버퍼로 복귀
-                Console.Write("\x1b[?1049l");
-                return name.Length > 0 ? name.ToString() : null;
-            }
+            var name = new System.Text.StringBuilder();
 
-            if (key.Key == ConsoleKey.Escape)
+            while (true)
             {
-                // 원래 화면 버퍼로 복귀
-                Console.Write("\x1b[?1049l");
-                return null;
-            }
+                var key = Console.ReadKey(intercept: true);
 
-            if (key.Key == ConsoleKey.Backspace)
-            {
-                if (name.Length > 0)
+                if (key.Key == ConsoleKey.Enter)
                 {
-                    name.Length--;
-                    Console.Write("\b \b");
+                    // 원래 화면 버퍼로 복귀
+                    Console.Write("\x1b[?1049l");
+                    return name.Length > 0 ? name.ToString() : null;
                 }
-                continue;
-            }
 
-            if (key.KeyChar != '\0' && !char.IsControl(key.KeyChar))
-            {
-                name.Append(key.KeyChar);
-                Console.Write(key.KeyChar);
+                if (key.Key == ConsoleKey.Escape)
+                {
+                    // 원래 화면 버퍼로 복귀
+                    Console.Write("\x1b[?1049l");
+                    return null;
+                }
+
+                if (key.Key == ConsoleKey.Backspace)
+                {
+                    if (name.Length > 0)
+                    {
+                        name.Length--;
+                        Console.Write("\b \b");
+                    }
+                    continue;
+                }
+
+                if (key.KeyChar != '\0' && !char.IsControl(key.KeyChar))
+                {
+                    name.Append(key.KeyChar);
+                    Console.Write(key.KeyChar);
+                }
             }
+        }
+        finally
+        {
+            _overlayActive = false;
+            FlushPendingOutput();
         }
     }
 
-    private static void ShowTerminalHelp()
+    private void ShowTerminalHelp()
     {
-        // 대체 화면 버퍼로 전환
-        Console.Write("\x1b[?1049h");  // Switch to alternate screen buffer
-        Console.Write("\x1b[H");       // Move cursor to home
+        _overlayActive = true;
+        try
+        {
+            // 대체 화면 버퍼로 전환
+            Console.Write("\x1b[?1049h");  // Switch to alternate screen buffer
+            Console.Write("\x1b[H");       // Move cursor to home
 
-        Console.WriteLine("--- WinScreen Key Bindings ---");
-        Console.WriteLine("  Ctrl+A, D      Detach from session");
-        Console.WriteLine("  Ctrl+A, K      Kill current window");
-        Console.WriteLine("  Ctrl+A, C      Create new window");
-        Console.WriteLine("  Ctrl+A, N      Next window");
-        Console.WriteLine("  Ctrl+A, P      Previous window");
-        Console.WriteLine("  Ctrl+A, W      List windows");
-        Console.WriteLine("  Ctrl+A, 0-9    Switch to window N");
-        Console.WriteLine("  Ctrl+A, Shift+A  Rename current window");
-        Console.WriteLine("  Ctrl+A, $      Rename session");
-        Console.WriteLine("  Ctrl+A, A      Send Ctrl+A");
-        Console.WriteLine("  Ctrl+A, ?      Show this help");
-        Console.WriteLine("--------------------------------");
-        Console.WriteLine();
-        Console.WriteLine("Press any key to continue...");
+            Console.WriteLine("--- WinScreen Key Bindings ---");
+            Console.WriteLine("  Ctrl+A, D      Detach from session");
+            Console.WriteLine("  Ctrl+A, K      Kill current window");
+            Console.WriteLine("  Ctrl+A, C      Create new window");
+            Console.WriteLine("  Ctrl+A, N      Next window");
+            Console.WriteLine("  Ctrl+A, P      Previous window");
+            Console.WriteLine("  Ctrl+A, W      List windows");
+            Console.WriteLine("  Ctrl+A, 0-9    Switch to window N");
+            Console.WriteLine("  Ctrl+A, Shift+A  Rename current window");
+            Console.WriteLine("  Ctrl+A, $      Rename session");
+            Console.WriteLine("  Ctrl+A, A      Send Ctrl+A");
+            Console.WriteLine("  Ctrl+A, ?      Show this help");
+            Console.WriteLine("--------------------------------");
+            Console.WriteLine();
+            Console.WriteLine("Press any key to continue...");
 
-        Console.ReadKey(intercept: true);
+            Console.ReadKey(intercept: true);
 
-        // 원래 화면 버퍼로 복귀
-        Console.Write("\x1b[?1049l");  // Switch back to main screen buffer
+            // 원래 화면 버퍼로 복귀
+            Console.Write("\x1b[?1049l");  // Switch back to main screen buffer
+        }
+        finally
+        {
+            _overlayActive = false;
+            FlushPendingOutput();
+        }
+    }
+
+    private void FlushPendingOutput()
+    {
+        while (_pendingOutput.TryDequeue(out var data))
+        {
+            var text = System.Text.Encoding.UTF8.GetString(data);
+            Console.Write(text);
+        }
     }
 
     private static void ShowWindowList(List<WindowInfo> windows, int activeIndex)
@@ -1319,18 +1419,22 @@ class ScreenClient
         Console.WriteLine($@"
 WinScreen v{Constants.Version} - Windows Screen-like Terminal Multiplexer
 
-Usage: screen [options] [command]
+Usage: screen [options] [command ...]
 
-Commands:
+Session Commands:
   (no command)         Create new session and attach
   -ls, -list           List all sessions
   -r, -resume [id]     Attach to detached session (auto-select if only one)
   -R [id]              Attach or create if no session exists
   -d -r <id>           Force detach and reattach (kick other client)
+  -d -m [cmd ...]      Create detached session (run in background)
   -S <name>            Create session with name
   -p <profile>         Use profile (cmd, powershell, pwsh, conda, etc.)
+  -m                   Force new session (ignore nested session warning)
   -X kill <id>         Kill a session
   -X kill-all          Kill all sessions
+
+  Note: Short options can be combined (e.g., -dmS name = -d -m -S name)
 
 Server Management:
   --server             Check server status
@@ -1356,7 +1460,14 @@ Profile Options (for --profile-add):
 
 Key Bindings (when attached):
   Ctrl+A, D            Detach from session
-  Ctrl+A, K            Kill session
+  Ctrl+A, C            Create new window
+  Ctrl+A, K            Kill current window
+  Ctrl+A, N            Next window
+  Ctrl+A, P            Previous window
+  Ctrl+A, W            List windows
+  Ctrl+A, 0-9          Switch to window N
+  Ctrl+A, Shift+A      Rename window
+  Ctrl+A, $            Rename session
   Ctrl+A, A            Send Ctrl+A to terminal
   Ctrl+A, ?            Show key bindings
 
@@ -1366,8 +1477,9 @@ Examples:
   screen -p powershell      Create session using PowerShell profile
   screen -ls                List sessions
   screen -r mywork          Attach to 'mywork' session
-  screen -r abc123          Attach to session by ID
   screen -d -r mywork       Force reattach (disconnect other client)
+  screen -dmS build npm run build   Run command in background
+  screen -dm python server.py       Background without name
 ");
         return 0;
     }
@@ -1416,17 +1528,65 @@ Examples:
     private static ParsedArgs ParseArgs(string[] args)
     {
         var result = new ParsedArgs();
+        var positionalArgs = new List<string>();
 
-        for (int i = 0; i < args.Length; i++)
+        // 연결된 짧은 옵션 확장 (예: -dmS -> -d -m -S)
+        // GNU screen 호환: 값이 필요한 옵션(S, p)은 마지막에 와야 함
+        var expandedArgs = new List<string>();
+        foreach (var arg in args)
         {
-            var arg = args[i];
+            // -로 시작하고 --로 시작하지 않으며, 2글자 이상인 경우
+            if (arg.StartsWith("-") && !arg.StartsWith("--") && arg.Length > 2)
+            {
+                // -dmS, -dm, -dmp 같은 패턴 처리
+                var tempExpanded = new List<string>();
+                bool valid = true;
+                for (int j = 1; j < arg.Length; j++)
+                {
+                    var c = arg[j];
+                    // S, p는 값이 필요한 옵션 (마지막에 와야 함)
+                    if (c == 'S' || c == 'p')
+                    {
+                        tempExpanded.Add($"-{c}");
+                        if (j + 1 < arg.Length)
+                        {
+                            // -dmSname, -dmpprofile 형태: 옵션 뒤의 문자열을 값으로 사용
+                            tempExpanded.Add(arg.Substring(j + 1));
+                        }
+                        // -dmS name 형태: 마지막이면 다음 인자에서 값을 가져옴 (기존 파싱에서 처리)
+                        break;
+                    }
+                    else if (c == 'd' || c == 'm' || c == 'r' || c == 'R')
+                    {
+                        tempExpanded.Add($"-{c}");
+                    }
+                    else
+                    {
+                        // 알 수 없는 문자가 있으면 원래 인자 유지
+                        valid = false;
+                        break;
+                    }
+                }
+                if (valid && tempExpanded.Count > 0)
+                {
+                    expandedArgs.AddRange(tempExpanded);
+                    continue;
+                }
+            }
+            // 확장 안 됨 - 원래 인자 추가
+            expandedArgs.Add(arg);
+        }
+
+        for (int i = 0; i < expandedArgs.Count; i++)
+        {
+            var arg = expandedArgs[i];
 
             // 대소문자 구분이 필요한 옵션 먼저 처리
             if (arg == "-R")
             {
                 result.Command = Command.AttachOrCreate;
-                if (i + 1 < args.Length && !args[i + 1].StartsWith("-"))
-                    result.SessionId = args[++i];
+                if (i + 1 < expandedArgs.Count && !expandedArgs[i + 1].StartsWith("-"))
+                    result.SessionId = expandedArgs[++i];
                 continue;
             }
 
@@ -1442,17 +1602,17 @@ Examples:
                 case "-resume":
                 case "--resume":
                     result.Command = Command.Attach;
-                    if (i + 1 < args.Length && !args[i + 1].StartsWith("-"))
-                        result.SessionId = args[++i];
+                    if (i + 1 < expandedArgs.Count && !expandedArgs[i + 1].StartsWith("-"))
+                        result.SessionId = expandedArgs[++i];
                     break;
                     
                 case "-s":
-                    if (i + 1 < args.Length) result.SessionName = args[++i];
+                    if (i + 1 < expandedArgs.Count) result.SessionName = expandedArgs[++i];
                     break;
                     
                 case "-p":
                 case "--profile":
-                    if (i + 1 < args.Length) result.Profile = args[++i];
+                    if (i + 1 < expandedArgs.Count) result.Profile = expandedArgs[++i];
                     break;
                     
                 case "-d":
@@ -1463,14 +1623,14 @@ Examples:
                     break;
                     
                 case "-x":
-                    if (i + 1 < args.Length)
+                    if (i + 1 < expandedArgs.Count)
                     {
-                        var subCmd = args[i + 1].ToLowerInvariant();
+                        var subCmd = expandedArgs[i + 1].ToLowerInvariant();
                         if (subCmd == "kill")
                         {
                             i++;
                             result.Command = Command.Kill;
-                            if (i + 1 < args.Length) result.SessionId = args[++i];
+                            if (i + 1 < expandedArgs.Count) result.SessionId = expandedArgs[++i];
                         }
                         else if (subCmd == "kill-all")
                         {
@@ -1504,21 +1664,21 @@ Examples:
 
                 case "--profile-add":
                     result.Command = Command.ProfileAdd;
-                    if (i + 1 < args.Length && !args[i + 1].StartsWith("-"))
-                        result.ProfileName = args[++i];
+                    if (i + 1 < expandedArgs.Count && !expandedArgs[i + 1].StartsWith("-"))
+                        result.ProfileName = expandedArgs[++i];
                     break;
 
                 case "--profile-remove":
                 case "--profile-delete":
                     result.Command = Command.ProfileRemove;
-                    if (i + 1 < args.Length && !args[i + 1].StartsWith("-"))
-                        result.ProfileName = args[++i];
+                    if (i + 1 < expandedArgs.Count && !expandedArgs[i + 1].StartsWith("-"))
+                        result.ProfileName = expandedArgs[++i];
                     break;
 
                 case "--profile-show":
                     result.Command = Command.ProfileShow;
-                    if (i + 1 < args.Length && !args[i + 1].StartsWith("-"))
-                        result.ProfileName = args[++i];
+                    if (i + 1 < expandedArgs.Count && !expandedArgs[i + 1].StartsWith("-"))
+                        result.ProfileName = expandedArgs[++i];
                     break;
 
                 case "--profile-reset":
@@ -1532,25 +1692,25 @@ Examples:
 
                 case "--set-default":
                     result.Command = Command.SetDefault;
-                    if (i + 1 < args.Length && !args[i + 1].StartsWith("-"))
-                        result.ProfileName = args[++i];
+                    if (i + 1 < expandedArgs.Count && !expandedArgs[i + 1].StartsWith("-"))
+                        result.ProfileName = expandedArgs[++i];
                     break;
 
                 case "--shell":
-                    if (i + 1 < args.Length) result.ProfileShell = args[++i];
+                    if (i + 1 < expandedArgs.Count) result.ProfileShell = expandedArgs[++i];
                     break;
 
                 case "--args":
-                    if (i + 1 < args.Length) result.ProfileArgs = args[++i];
+                    if (i + 1 < expandedArgs.Count) result.ProfileArgs = expandedArgs[++i];
                     break;
 
                 case "--startup":
-                    if (i + 1 < args.Length) result.ProfileStartup = args[++i];
+                    if (i + 1 < expandedArgs.Count) result.ProfileStartup = expandedArgs[++i];
                     break;
 
                 case "--desc":
                 case "--description":
-                    if (i + 1 < args.Length) result.ProfileDescription = args[++i];
+                    if (i + 1 < expandedArgs.Count) result.ProfileDescription = expandedArgs[++i];
                     break;
 
                 case "-h":
@@ -1567,17 +1727,33 @@ Examples:
                         Console.Error.WriteLine("Use 'screen --help' for usage information.");
                         Environment.Exit(1);
                     }
-                    // 위치 인자로 세션 이름 또는 ID
-                    if (result.SessionId == null)
-                    {
-                        if (result.Command == Command.None)
-                        {
-                            result.Command = Command.Attach;
-                        }
-                        result.SessionId = arg;
-                    }
+                    // 위치 인자 수집 (나중에 컨텍스트에 따라 처리)
+                    positionalArgs.Add(arg);
                     break;
             }
+        }
+
+        // -d -m 조합: detached 모드로 세션 생성 (백그라운드 실행)
+        if (result.ForceDetach && result.ForceNewSession)
+        {
+            result.Command = Command.CreateDetached;
+            result.ForceDetach = false;
+            // 위치 인자가 있으면 명령어로 처리
+            if (positionalArgs.Count > 0)
+            {
+                result.InitialCommand = string.Join(" ", positionalArgs);
+            }
+            return result;
+        }
+
+        // 그 외: 첫 번째 위치 인자를 세션 ID로 처리
+        if (positionalArgs.Count > 0)
+        {
+            if (result.Command == Command.None)
+            {
+                result.Command = Command.Attach;
+            }
+            result.SessionId = positionalArgs[0];
         }
 
         // -d 플래그 처리: -r과 함께 사용되지 않으면 원격 분리 명령
@@ -1601,6 +1777,7 @@ enum Command
     List,
     ListProfiles,
     Create,
+    CreateDetached,
     Attach,
     AttachOrCreate,
     Detach,
@@ -1628,6 +1805,8 @@ class ParsedArgs
     public bool ForceNewSession { get; set; }
     /// <summary>-d 옵션: 강제 분리 (다른 클라이언트 연결 중이면 분리 후 연결)</summary>
     public bool ForceDetach { get; set; }
+    /// <summary>세션 시작 시 실행할 명령어 (예: screen -d -m python server.py)</summary>
+    public string? InitialCommand { get; set; }
 
     // Profile management args
     public string? ProfileName { get; set; }

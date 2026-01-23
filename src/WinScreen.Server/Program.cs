@@ -346,6 +346,16 @@ class ClientHandler
 
         Console.WriteLine($"[{_clientId[..8]}] Created session: {session.Name} ({session.Id[..8]})");
 
+        // InitialCommand가 있으면 실행 (detached 모드에서 명령어 실행용)
+        if (!string.IsNullOrEmpty(msg.InitialCommand))
+        {
+            // 쉘 초기화 대기 후 명령어 전송
+            await Task.Delay(100, ct);
+            var commandBytes = System.Text.Encoding.UTF8.GetBytes(msg.InitialCommand + "\r");
+            await session.WriteAsync(commandBytes, ct);
+            Console.WriteLine($"[{_clientId[..8]}] Executed initial command: {msg.InitialCommand}");
+        }
+
         await SendAsync(new SessionCreatedMessage { Session = session.ToInfo(), Warning = warning }, ct);
     }
 

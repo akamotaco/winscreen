@@ -13,6 +13,8 @@ WinScreen은 Linux의 `screen` 명령어와 유사한 UX를 Windows에서 제공
 
 - **screen 스타일 UX**: `-r`로 세션 선택, `Ctrl+A, D`로 detach
 - **멀티 윈도우**: 한 세션 내에서 여러 독립적인 터미널 윈도우 지원 (`Ctrl+A, C`로 생성, `Ctrl+A, N/P`로 전환)
+- **Detached 모드**: `-d -m`으로 백그라운드 세션 생성, 명령어 실행 지원
+- **GNU Screen 호환 축약형**: `-dmS name`, `-dmp profile` 등 축약형 옵션 지원
 - **자동 윈도우 리사이즈**: 윈도우 전환 시 현재 터미널 크기에 맞게 자동 리사이즈
 - **세션 유지**: 터미널을 닫아도 세션이 유지됨
 - **프로필 시스템**: CMD, PowerShell, Conda, Git Bash, WSL 등 다양한 쉘 지원
@@ -121,6 +123,16 @@ screen -R mywork
 # 다른 클라이언트가 연결 중인 세션 강제 재연결 (-d -r)
 screen -d -r mywork
 
+# 백그라운드에서 세션 생성 (detached 모드, -d -m)
+screen -d -m
+screen -d -m -S daemon
+screen -d -m -S build -p powershell
+
+# 백그라운드에서 명령어 실행 (-dmS 축약형 지원)
+screen -dmS myserver python server.py
+screen -dm npm run build
+screen -d -m -S worker python worker.py
+
 # 세션 종료
 screen -X kill mywork
 
@@ -184,6 +196,31 @@ screen -S project1
 screen -r project1
 
 # 5. 이전 상태 그대로 계속 작업
+```
+
+### 백그라운드 세션 (Detached 모드)
+
+`-d -m` 옵션으로 세션을 생성하고 즉시 분리하여 백그라운드에서 실행할 수 있습니다.
+GNU Screen처럼 `-dmS`와 같은 축약형도 지원합니다.
+
+```batch
+# 백그라운드 세션 생성 후 나중에 연결
+screen -dmS myserver
+screen -r myserver
+
+# 백그라운드에서 명령어 실행
+screen -dmS build npm run build
+screen -dmS worker python worker.py
+
+# 실행 중인 명령어 확인
+screen -r build      # 빌드 진행 상황 확인
+# Ctrl+A, D로 다시 분리
+
+# 여러 백그라운드 작업 동시 실행
+screen -dmS web python -m http.server
+screen -dmS api python api_server.py
+screen -dmS db docker compose up
+screen -ls           # 모든 세션 확인
 ```
 
 ### 멀티 윈도우 워크플로우
@@ -336,6 +373,7 @@ screen --profile-reset
 | `-r` | ✅ | ✅ | 재연결 |
 | `-R` | ✅ | ✅ | 연결 또는 생성 |
 | `-d -r` | ✅ | ✅ | 강제 재연결 |
+| `-d -m` | ✅ | ✅ | detached 모드로 세션 생성 |
 | `-ls` | ✅ | ✅ | 세션 목록 |
 | `-X kill` | ✅ | ✅ | 세션 종료 |
 | `-X kill-all` | ❌ | ✅ | WinScreen 전용 |

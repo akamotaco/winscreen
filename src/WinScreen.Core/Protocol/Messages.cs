@@ -143,6 +143,8 @@ public class CreateSessionMessage : ClientMessage
     public string? WorkingDirectory { get; set; }
     public short Rows { get; set; } = 24;
     public short Cols { get; set; } = 80;
+    /// <summary>세션 시작 시 실행할 명령어 (예: screen -d -m python server.py)</summary>
+    public string? InitialCommand { get; set; }
 }
 
 public class AttachMessage : ClientMessage
