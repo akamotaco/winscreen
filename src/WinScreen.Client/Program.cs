@@ -871,6 +871,32 @@ class ScreenClient
                             Console.Write("\r\n[Detached]\r\n");
                             _isAttached = false;
                             return;
+
+                        case WindowSwitchedMessage switched:
+                            // 화면 클리어 후 스크롤백 버퍼 출력
+                            Console.Write("\x1b[2J\x1b[H");  // Clear screen and move cursor to home
+                            if (switched.ScrollbackBuffer != null && switched.ScrollbackBuffer.Length > 0)
+                            {
+                                var scrollbackText = System.Text.Encoding.UTF8.GetString(switched.ScrollbackBuffer);
+                                Console.Write(scrollbackText);
+                            }
+                            break;
+
+                        case WindowEndedMessage windowEnded:
+                            Console.Write($"\r\n[Window {windowEnded.WindowIndex} ended with exit code {windowEnded.ExitCode}]\r\n");
+                            if (windowEnded.NewActiveWindowIndex != null)
+                            {
+                                Console.Write($"[Switched to window {windowEnded.NewActiveWindowIndex}]\r\n");
+                            }
+                            break;
+
+                        case WindowListMessage windowList:
+                            ShowWindowList(windowList.Windows, windowList.ActiveWindowIndex);
+                            break;
+
+                        case WindowCreatedMessage created:
+                            Console.Write($"\r\n[Created window {created.Window.Index}: {created.Window.Name}]\r\n");
+                            break;
                     }
                 }
             }
@@ -938,18 +964,51 @@ class ScreenClient
 
                             if (keyInfo.Key == ConsoleKey.K)
                             {
-                                await ProtocolSerializer.SendAsync(_pipe!, new KillSessionMessage { SessionId = _attachedSessionId! }, _cts.Token);
-                                // readTask가 SessionEndedMessage를 받아 _isAttached = false로 설정할 때까지 대기
-                                while (_isAttached && !_cts.Token.IsCancellationRequested)
-                                {
-                                    await Task.Delay(10, _cts.Token);
-                                }
-                                return;
+                                // 현재 윈도우 종료 (마지막 윈도우면 세션 종료)
+                                await ProtocolSerializer.SendAsync(_pipe!, new KillWindowMessage(), _cts.Token);
+                                continue;
                             }
 
                             if (keyInfo.KeyChar == '?')
                             {
                                 ShowTerminalHelp();
+                                continue;
+                            }
+
+                            // 윈도우 관련 키 바인딩
+                            if (keyInfo.Key == ConsoleKey.C)
+                            {
+                                // 새 윈도우 생성
+                                await ProtocolSerializer.SendAsync(_pipe!, new CreateWindowMessage(), _cts.Token);
+                                continue;
+                            }
+
+                            if (keyInfo.Key == ConsoleKey.N)
+                            {
+                                // 다음 윈도우
+                                await ProtocolSerializer.SendAsync(_pipe!, new NextWindowMessage(), _cts.Token);
+                                continue;
+                            }
+
+                            if (keyInfo.Key == ConsoleKey.P)
+                            {
+                                // 이전 윈도우
+                                await ProtocolSerializer.SendAsync(_pipe!, new PreviousWindowMessage(), _cts.Token);
+                                continue;
+                            }
+
+                            if (keyInfo.Key == ConsoleKey.W)
+                            {
+                                // 윈도우 목록
+                                await ProtocolSerializer.SendAsync(_pipe!, new ListWindowsMessage(), _cts.Token);
+                                continue;
+                            }
+
+                            // 숫자 키로 윈도우 전환 (0-9)
+                            if (keyInfo.Key >= ConsoleKey.D0 && keyInfo.Key <= ConsoleKey.D9)
+                            {
+                                var windowIndex = keyInfo.Key - ConsoleKey.D0;
+                                await ProtocolSerializer.SendAsync(_pipe!, new SwitchWindowMessage { WindowIndex = windowIndex }, _cts.Token);
                                 continue;
                             }
                         }
@@ -1075,10 +1134,26 @@ class ScreenClient
     {
         Console.WriteLine("\r\n--- WinScreen Key Bindings ---");
         Console.WriteLine("  Ctrl+A, D    Detach from session");
-        Console.WriteLine("  Ctrl+A, K    Kill session");
+        Console.WriteLine("  Ctrl+A, K    Kill current window");
+        Console.WriteLine("  Ctrl+A, C    Create new window");
+        Console.WriteLine("  Ctrl+A, N    Next window");
+        Console.WriteLine("  Ctrl+A, P    Previous window");
+        Console.WriteLine("  Ctrl+A, W    List windows");
+        Console.WriteLine("  Ctrl+A, 0-9  Switch to window N");
         Console.WriteLine("  Ctrl+A, A    Send Ctrl+A");
         Console.WriteLine("  Ctrl+A, ?    Show this help");
         Console.WriteLine("------------------------------\r\n");
+    }
+
+    private static void ShowWindowList(List<WindowInfo> windows, int activeIndex)
+    {
+        Console.Write("\r\n--- Windows ---\r\n");
+        foreach (var w in windows)
+        {
+            var marker = w.Index == activeIndex ? "*" : " ";
+            Console.Write($" {marker}{w.Index} {w.Name}\r\n");
+        }
+        Console.Write("---------------\r\n");
     }
 
     private async Task<int> DetachSession(string? sessionId)

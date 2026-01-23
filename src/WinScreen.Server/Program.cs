@@ -193,6 +193,8 @@ class ClientHandler
             {
                 _attachedSession.OutputReceived -= OnSessionOutput;
                 _attachedSession.SessionEnded -= OnSessionEndedWhileAttached;
+                _attachedSession.WindowEnded -= OnWindowEndedWhileAttached;
+                _attachedSession.ActiveWindowChanged -= OnActiveWindowChanged;
                 _attachedSession.Detach(_clientId);
             }
             _pipe.Dispose();
@@ -264,6 +266,31 @@ class ClientHandler
                 case ShutdownMessage:
                     Environment.Exit(0);
                     break;
+
+                // 윈도우 관련 메시지 처리
+                case CreateWindowMessage createWindow:
+                    await HandleCreateWindow(createWindow, ct);
+                    break;
+
+                case KillWindowMessage killWindow:
+                    await HandleKillWindow(killWindow, ct);
+                    break;
+
+                case SwitchWindowMessage switchWindow:
+                    await HandleSwitchWindow(switchWindow, ct);
+                    break;
+
+                case NextWindowMessage:
+                    await HandleNextWindow(ct);
+                    break;
+
+                case PreviousWindowMessage:
+                    await HandlePreviousWindow(ct);
+                    break;
+
+                case ListWindowsMessage:
+                    await HandleListWindows(ct);
+                    break;
             }
         }
         catch (Exception ex)
@@ -313,6 +340,8 @@ class ClientHandler
         {
             _attachedSession.OutputReceived -= OnSessionOutput;
             _attachedSession.SessionEnded -= OnSessionEndedWhileAttached;
+            _attachedSession.WindowEnded -= OnWindowEndedWhileAttached;
+            _attachedSession.ActiveWindowChanged -= OnActiveWindowChanged;
             _attachedSession.Detach(_clientId);
         }
 
@@ -345,6 +374,8 @@ class ClientHandler
         // 2. 이벤트 먼저 구독 (이 시점부터 출력은 _attachingOutput에 큐잉됨)
         session.OutputReceived += OnSessionOutput;
         session.SessionEnded += OnSessionEndedWhileAttached;
+        session.WindowEnded += OnWindowEndedWhileAttached;
+        session.ActiveWindowChanged += OnActiveWindowChanged;
 
         // 3. 스크롤백 버퍼 가져오기 (이벤트 구독 후이므로 새 출력은 큐에 들어감)
         var scrollback = session.GetScrollbackBuffer();
@@ -375,6 +406,8 @@ class ClientHandler
         var sessionId = _attachedSession.Id;
         _attachedSession.OutputReceived -= OnSessionOutput;
         _attachedSession.SessionEnded -= OnSessionEndedWhileAttached;
+        _attachedSession.WindowEnded -= OnWindowEndedWhileAttached;
+        _attachedSession.ActiveWindowChanged -= OnActiveWindowChanged;
         _attachedSession.Detach(_clientId);
         _attachedSession = null;
 
@@ -503,6 +536,243 @@ class ClientHandler
         catch (ArgumentException ex)
         {
             await SendAsync(new ErrorMessage { Message = ex.Message }, ct);
+        }
+    }
+
+    // 윈도우 관련 핸들러
+
+    private async Task HandleCreateWindow(CreateWindowMessage msg, CancellationToken ct)
+    {
+        if (_attachedSession == null)
+        {
+            await SendAsync(new ErrorMessage { Message = "Not attached to any session" }, ct);
+            return;
+        }
+
+        var profile = _profileStore.GetOrDefault(msg.ProfileName ?? _attachedSession.ProfileName);
+        var workingDir = profile.WorkingDirectory ?? _attachedSession.WorkingDirectory ?? Environment.CurrentDirectory;
+
+        var window = _attachedSession.CreateWindow(
+            profile.GetCommandLine(),
+            msg.WindowName,
+            workingDir,
+            profile.Name,
+            profile.Environment,
+            (short)Console.WindowWidth,
+            (short)Console.WindowHeight);
+
+        // 새 윈도우로 자동 전환
+        _attachedSession.SwitchWindow(window.Index);
+
+        Console.WriteLine($"[{_clientId[..8]}] Created window {window.Index} in session {_attachedSession.Id[..8]}");
+
+        // 윈도우 생성 메시지 전송
+        await SendAsync(new WindowCreatedMessage { Window = window.ToInfo(true) }, ct);
+
+        // 윈도우 전환 메시지 전송 (스크롤백 포함)
+        await SendAsync(new WindowSwitchedMessage
+        {
+            WindowIndex = window.Index,
+            Window = window.ToInfo(true),
+            ScrollbackBuffer = window.GetScrollbackBuffer()
+        }, ct);
+    }
+
+    private async Task HandleKillWindow(KillWindowMessage msg, CancellationToken ct)
+    {
+        if (_attachedSession == null)
+        {
+            await SendAsync(new ErrorMessage { Message = "Not attached to any session" }, ct);
+            return;
+        }
+
+        var windowIndex = msg.WindowIndex ?? _attachedSession.ActiveWindowIndex;
+
+        if (!_attachedSession.KillWindow(windowIndex))
+        {
+            await SendAsync(new ErrorMessage { Message = $"Window {windowIndex} not found" }, ct);
+            return;
+        }
+
+        Console.WriteLine($"[{_clientId[..8]}] Killed window {windowIndex} in session {_attachedSession.Id[..8]}");
+
+        // WindowEnded 이벤트가 발생하면 OnWindowEndedWhileAttached에서 메시지 전송
+    }
+
+    private async Task HandleSwitchWindow(SwitchWindowMessage msg, CancellationToken ct)
+    {
+        if (_attachedSession == null)
+        {
+            await SendAsync(new ErrorMessage { Message = "Not attached to any session" }, ct);
+            return;
+        }
+
+        if (!_attachedSession.SwitchWindow(msg.WindowIndex))
+        {
+            await SendAsync(new ErrorMessage { Message = $"Window {msg.WindowIndex} not found" }, ct);
+            return;
+        }
+
+        var window = _attachedSession.ActiveWindow;
+        if (window == null) return;
+
+        Console.WriteLine($"[{_clientId[..8]}] Switched to window {msg.WindowIndex} in session {_attachedSession.Id[..8]}");
+
+        await SendAsync(new WindowSwitchedMessage
+        {
+            WindowIndex = window.Index,
+            Window = window.ToInfo(true),
+            ScrollbackBuffer = window.GetScrollbackBuffer()
+        }, ct);
+    }
+
+    private async Task HandleNextWindow(CancellationToken ct)
+    {
+        if (_attachedSession == null)
+        {
+            await SendAsync(new ErrorMessage { Message = "Not attached to any session" }, ct);
+            return;
+        }
+
+        if (!_attachedSession.NextWindow())
+        {
+            // 윈도우가 하나뿐이면 무시
+            return;
+        }
+
+        var window = _attachedSession.ActiveWindow;
+        if (window == null) return;
+
+        Console.WriteLine($"[{_clientId[..8]}] Switched to next window {window.Index}");
+
+        await SendAsync(new WindowSwitchedMessage
+        {
+            WindowIndex = window.Index,
+            Window = window.ToInfo(true),
+            ScrollbackBuffer = window.GetScrollbackBuffer()
+        }, ct);
+    }
+
+    private async Task HandlePreviousWindow(CancellationToken ct)
+    {
+        if (_attachedSession == null)
+        {
+            await SendAsync(new ErrorMessage { Message = "Not attached to any session" }, ct);
+            return;
+        }
+
+        if (!_attachedSession.PreviousWindow())
+        {
+            // 윈도우가 하나뿐이면 무시
+            return;
+        }
+
+        var window = _attachedSession.ActiveWindow;
+        if (window == null) return;
+
+        Console.WriteLine($"[{_clientId[..8]}] Switched to previous window {window.Index}");
+
+        await SendAsync(new WindowSwitchedMessage
+        {
+            WindowIndex = window.Index,
+            Window = window.ToInfo(true),
+            ScrollbackBuffer = window.GetScrollbackBuffer()
+        }, ct);
+    }
+
+    private async Task HandleListWindows(CancellationToken ct)
+    {
+        if (_attachedSession == null)
+        {
+            await SendAsync(new ErrorMessage { Message = "Not attached to any session" }, ct);
+            return;
+        }
+
+        var windows = _attachedSession.GetWindowsInfo();
+
+        await SendAsync(new WindowListMessage
+        {
+            Windows = windows,
+            ActiveWindowIndex = _attachedSession.ActiveWindowIndex
+        }, ct);
+    }
+
+    private async void OnWindowEndedWhileAttached(int windowIndex, int exitCode)
+    {
+        if (_attachedSession == null) return;
+
+        try
+        {
+            int? newActiveIndex = null;
+            if (_attachedSession.WindowCount > 0)
+            {
+                newActiveIndex = _attachedSession.ActiveWindowIndex;
+            }
+
+            await SendAsync(new WindowEndedMessage
+            {
+                WindowIndex = windowIndex,
+                ExitCode = exitCode,
+                NewActiveWindowIndex = newActiveIndex
+            }, CancellationToken.None);
+
+            // 새 활성 윈도우가 있으면 전환 메시지 전송
+            if (newActiveIndex != null)
+            {
+                var window = _attachedSession.ActiveWindow;
+                if (window != null)
+                {
+                    await SendAsync(new WindowSwitchedMessage
+                    {
+                        WindowIndex = window.Index,
+                        Window = window.ToInfo(true),
+                        ScrollbackBuffer = window.GetScrollbackBuffer()
+                    }, CancellationToken.None);
+                }
+            }
+        }
+        catch (IOException)
+        {
+            // 파이프 끊김 - 정상적인 연결 해제
+        }
+        catch (ObjectDisposedException)
+        {
+            // 이미 dispose됨 - 무시
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[{_clientId[..8]}] Window ended notification error: {ex.Message}");
+        }
+    }
+
+    private async void OnActiveWindowChanged(int newWindowIndex)
+    {
+        if (_attachedSession == null) return;
+
+        try
+        {
+            var window = _attachedSession.GetWindow(newWindowIndex);
+            if (window != null)
+            {
+                await SendAsync(new WindowSwitchedMessage
+                {
+                    WindowIndex = window.Index,
+                    Window = window.ToInfo(true),
+                    ScrollbackBuffer = window.GetScrollbackBuffer()
+                }, CancellationToken.None);
+            }
+        }
+        catch (IOException)
+        {
+            // 파이프 끊김
+        }
+        catch (ObjectDisposedException)
+        {
+            // 이미 dispose됨
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[{_clientId[..8]}] Active window changed notification error: {ex.Message}");
         }
     }
 

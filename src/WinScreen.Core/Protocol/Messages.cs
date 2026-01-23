@@ -37,7 +37,21 @@ public enum ClientMessageType
     /// <summary>기본 프로필 설정</summary>
     SetDefaultProfile,
     /// <summary>서버 종료</summary>
-    Shutdown
+    Shutdown,
+
+    // 윈도우 관련 메시지
+    /// <summary>새 윈도우 생성</summary>
+    CreateWindow,
+    /// <summary>윈도우 종료</summary>
+    KillWindow,
+    /// <summary>특정 윈도우로 전환</summary>
+    SwitchWindow,
+    /// <summary>다음 윈도우</summary>
+    NextWindow,
+    /// <summary>이전 윈도우</summary>
+    PreviousWindow,
+    /// <summary>윈도우 목록 요청</summary>
+    ListWindows
 }
 
 /// <summary>
@@ -66,7 +80,17 @@ public enum ServerMessageType
     /// <summary>프로필 작업 성공</summary>
     ProfileOk,
     /// <summary>기본 프로필</summary>
-    DefaultProfile
+    DefaultProfile,
+
+    // 윈도우 관련 메시지
+    /// <summary>윈도우 생성됨</summary>
+    WindowCreated,
+    /// <summary>윈도우 전환됨</summary>
+    WindowSwitched,
+    /// <summary>윈도우 종료됨</summary>
+    WindowEnded,
+    /// <summary>윈도우 목록</summary>
+    WindowList
 }
 
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "$type")]
@@ -85,6 +109,12 @@ public enum ServerMessageType
 [JsonDerivedType(typeof(GetDefaultProfileMessage), "getDefault")]
 [JsonDerivedType(typeof(SetDefaultProfileMessage), "setDefault")]
 [JsonDerivedType(typeof(ShutdownMessage), "shutdown")]
+[JsonDerivedType(typeof(CreateWindowMessage), "createWindow")]
+[JsonDerivedType(typeof(KillWindowMessage), "killWindow")]
+[JsonDerivedType(typeof(SwitchWindowMessage), "switchWindow")]
+[JsonDerivedType(typeof(NextWindowMessage), "nextWindow")]
+[JsonDerivedType(typeof(PreviousWindowMessage), "prevWindow")]
+[JsonDerivedType(typeof(ListWindowsMessage), "listWindows")]
 public abstract class ClientMessage
 {
     public abstract ClientMessageType Type { get; }
@@ -189,6 +219,43 @@ public class SetDefaultProfileMessage : ClientMessage
     public required string Name { get; set; }
 }
 
+// 윈도우 관련 클라이언트 메시지
+
+public class CreateWindowMessage : ClientMessage
+{
+    public override ClientMessageType Type => ClientMessageType.CreateWindow;
+    public string? WindowName { get; set; }
+    public string? ProfileName { get; set; }
+}
+
+public class KillWindowMessage : ClientMessage
+{
+    public override ClientMessageType Type => ClientMessageType.KillWindow;
+    /// <summary>종료할 윈도우 인덱스. null이면 현재 활성 윈도우</summary>
+    public int? WindowIndex { get; set; }
+}
+
+public class SwitchWindowMessage : ClientMessage
+{
+    public override ClientMessageType Type => ClientMessageType.SwitchWindow;
+    public required int WindowIndex { get; set; }
+}
+
+public class NextWindowMessage : ClientMessage
+{
+    public override ClientMessageType Type => ClientMessageType.NextWindow;
+}
+
+public class PreviousWindowMessage : ClientMessage
+{
+    public override ClientMessageType Type => ClientMessageType.PreviousWindow;
+}
+
+public class ListWindowsMessage : ClientMessage
+{
+    public override ClientMessageType Type => ClientMessageType.ListWindows;
+}
+
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "$type")]
 [JsonDerivedType(typeof(SessionListMessage), "sessionList")]
 [JsonDerivedType(typeof(SessionCreatedMessage), "created")]
@@ -201,6 +268,10 @@ public class SetDefaultProfileMessage : ClientMessage
 [JsonDerivedType(typeof(ProfileDetailMessage), "profileDetail")]
 [JsonDerivedType(typeof(ProfileOkMessage), "profileOk")]
 [JsonDerivedType(typeof(DefaultProfileMessage), "defaultProfile")]
+[JsonDerivedType(typeof(WindowCreatedMessage), "windowCreated")]
+[JsonDerivedType(typeof(WindowSwitchedMessage), "windowSwitched")]
+[JsonDerivedType(typeof(WindowEndedMessage), "windowEnded")]
+[JsonDerivedType(typeof(WindowListMessage), "windowList")]
 public abstract class ServerMessage
 {
     public abstract ServerMessageType Type { get; }
@@ -278,6 +349,39 @@ public class DefaultProfileMessage : ServerMessage
     public required string Name { get; set; }
 }
 
+// 윈도우 관련 서버 메시지
+
+public class WindowCreatedMessage : ServerMessage
+{
+    public override ServerMessageType Type => ServerMessageType.WindowCreated;
+    public required WindowInfo Window { get; set; }
+}
+
+public class WindowSwitchedMessage : ServerMessage
+{
+    public override ServerMessageType Type => ServerMessageType.WindowSwitched;
+    public required int WindowIndex { get; set; }
+    public required WindowInfo Window { get; set; }
+    /// <summary>해당 윈도우의 스크롤백 버퍼</summary>
+    public byte[]? ScrollbackBuffer { get; set; }
+}
+
+public class WindowEndedMessage : ServerMessage
+{
+    public override ServerMessageType Type => ServerMessageType.WindowEnded;
+    public required int WindowIndex { get; set; }
+    public int ExitCode { get; set; }
+    /// <summary>새 활성 윈도우 인덱스. 마지막 윈도우가 아니면 설정됨</summary>
+    public int? NewActiveWindowIndex { get; set; }
+}
+
+public class WindowListMessage : ServerMessage
+{
+    public override ServerMessageType Type => ServerMessageType.WindowList;
+    public required List<WindowInfo> Windows { get; set; }
+    public int ActiveWindowIndex { get; set; }
+}
+
 /// <summary>
 /// 세션 정보
 /// </summary>
@@ -288,6 +392,27 @@ public class SessionInfo
     public required DateTime CreatedAt { get; set; }
     public bool IsAttached { get; set; }
     public string? WorkingDirectory { get; set; }
+    public string? ProfileName { get; set; }
+
+    /// <summary>활성 윈도우 인덱스</summary>
+    public int ActiveWindowIndex { get; set; }
+
+    /// <summary>윈도우 목록</summary>
+    public List<WindowInfo> Windows { get; set; } = new();
+
+    /// <summary>윈도우 개수</summary>
+    public int WindowCount => Windows.Count;
+}
+
+/// <summary>
+/// 윈도우 정보
+/// </summary>
+public class WindowInfo
+{
+    public required int Index { get; set; }
+    public required string Name { get; set; }
+    public required DateTime CreatedAt { get; set; }
+    public bool IsActive { get; set; }
     public string? ProfileName { get; set; }
 }
 

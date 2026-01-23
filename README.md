@@ -10,6 +10,7 @@ WinScreen은 Linux의 `screen` 명령어와 유사한 UX를 Windows에서 제공
 ## 특징
 
 - **screen 스타일 UX**: `-r`로 세션 선택, `Ctrl+A, D`로 detach
+- **멀티 윈도우**: 한 세션 내에서 여러 독립적인 터미널 윈도우 지원 (`Ctrl+A, C`로 생성, `Ctrl+A, N/P`로 전환)
 - **세션 유지**: 터미널을 닫아도 세션이 유지됨
 - **프로필 시스템**: CMD, PowerShell, Conda, Git Bash, WSL 등 다양한 쉘 지원
 - **스크롤백 버퍼**: 재연결 시 이전 출력 복원
@@ -153,7 +154,12 @@ screen --server-stop
 | 키 조합 | 동작 |
 |---------|------|
 | `Ctrl+A, D` | 세션에서 분리 (detach) |
-| `Ctrl+A, K` | 세션 종료 |
+| `Ctrl+A, C` | 새 윈도우 생성 |
+| `Ctrl+A, K` | 현재 윈도우 종료 |
+| `Ctrl+A, N` | 다음 윈도우로 이동 |
+| `Ctrl+A, P` | 이전 윈도우로 이동 |
+| `Ctrl+A, W` | 윈도우 목록 표시 |
+| `Ctrl+A, 0-9` | 지정 번호의 윈도우로 이동 |
 | `Ctrl+A, A` | 실제 Ctrl+A 전송 |
 | `Ctrl+A, ?` | 도움말 표시 |
 
@@ -173,6 +179,37 @@ screen -S project1
 screen -r project1
 
 # 5. 이전 상태 그대로 계속 작업
+```
+
+### 멀티 윈도우 워크플로우
+
+한 세션 내에서 여러 독립적인 터미널 윈도우를 사용할 수 있습니다.
+
+```batch
+# 1. 세션 생성 (첫 번째 윈도우 자동 생성)
+screen -S mywork
+
+# 2. 새 윈도우 생성 (Ctrl+A, C)
+# 이제 윈도우 0과 윈도우 1이 있음
+
+# 3. 윈도우 간 이동
+# Ctrl+A, N → 다음 윈도우
+# Ctrl+A, P → 이전 윈도우
+# Ctrl+A, 0 → 윈도우 0으로 이동
+# Ctrl+A, 1 → 윈도우 1로 이동
+
+# 4. 윈도우 목록 확인 (Ctrl+A, W)
+# --- Windows ---
+#  *0 window-0
+#   1 window-1
+# ---------------
+
+# 5. 현재 윈도우 종료 (Ctrl+A, K 또는 exit)
+# 마지막 윈도우가 종료되면 세션도 종료됨
+
+# 6. Detach 후에도 모든 윈도우 상태 유지
+# Ctrl+A, D로 detach 후 screen -r로 재연결하면
+# 모든 윈도우가 그대로 유지됨
 ```
 
 ## 프로필
@@ -273,6 +310,8 @@ screen --profile-reset
 
 - Windows 10 1809 이상 필요 (ConPTY API)
 - 한 번에 하나의 클라이언트만 세션에 연결 가능
+- **화면 분할 미지원**: GNU Screen의 `Ctrl+a S` (수평 분할), `Ctrl+a |` (수직 분할) 등은 지원하지 않음
+  - 멀티 윈도우는 지원되며, `Ctrl+a c`로 새 윈도우 생성 후 `Ctrl+a n/p`로 전환 가능
 - 프로세스 fork가 불가능하므로 Linux screen의 일부 기능 미지원
 - 스크롤백 버퍼: 기본 1MB (설정 가능)
   - `profiles.json`에서 `maxScrollbackSizeKB` 값 변경 가능
@@ -301,8 +340,28 @@ screen --profile-reset
 - `screen --profiles`로 감지된 프로필 확인
 
 ### Ctrl+A가 작동하지 않음
-- Windows Terminal 또는 ConHost 사용 권장
-- 일부 터미널 에뮬레이터는 Ctrl+A를 가로챌 수 있음
+
+일부 터미널에서는 `Ctrl+A`가 "전체 선택" 등 다른 기능에 바인딩되어 있어 WinScreen이 키 입력을 받지 못할 수 있습니다.
+
+#### Windows Terminal
+
+1. 설정 열기: `Ctrl+,` 또는 탭 옆 드롭다운 → 설정
+2. 좌측 하단 **JSON 파일 열기** 클릭 (또는 `Ctrl+Shift+,`)
+3. `actions` 배열에 다음 추가:
+   ```json
+   { "keys": "ctrl+a", "command": "unbound" }
+   ```
+4. 저장 후 Windows Terminal 재시작
+
+#### 기본 명령 프롬프트 (ConHost)
+
+기본 명령 프롬프트에서는 `Ctrl+A`가 별도 기능에 바인딩되어 있지 않아 정상 작동합니다.
+
+#### 기타 터미널 에뮬레이터
+
+- **Cmder/ConEmu**: Settings → Keys & Macro에서 Ctrl+A 바인딩 해제
+- **Hyper**: `.hyper.js` 설정에서 keymaps 수정
+- **Git Bash (mintty)**: 기본적으로 Ctrl+A가 readline(줄 처음 이동)에 바인딩되어 있으나, WinScreen에서는 raw 모드로 동작하여 정상 작동함
 
 ### 빠른 타이핑 시 출력 누락
 - 최신 버전으로 업데이트 (stdout 동기화 개선됨)
