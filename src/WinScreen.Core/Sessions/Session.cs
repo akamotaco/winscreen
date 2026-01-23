@@ -76,10 +76,16 @@ public sealed class Session : IDisposable
         var id = GenerateId();
         name ??= $"session-{id[..8]}";
 
+        // WINSCREEN 환경 변수 추가 (nested session 감지용)
+        var env = environment != null
+            ? new Dictionary<string, string>(environment)
+            : new Dictionary<string, string>();
+        env["WINSCREEN"] = $"{id[..8]}.{name}";
+
         var pty = ConPty.Create(
             commandLine,
             workingDirectory,
-            environment,
+            env,
             cols,
             rows);
 

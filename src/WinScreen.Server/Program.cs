@@ -278,7 +278,7 @@ class ClientHandler
     {
         var profile = _profileStore.GetOrDefault(msg.ProfileName);
         var workingDir = msg.WorkingDirectory ?? profile.WorkingDirectory ?? Environment.CurrentDirectory;
-        
+
         var session = _sessionManager.Create(
             msg.SessionName,
             profile.GetCommandLine(),

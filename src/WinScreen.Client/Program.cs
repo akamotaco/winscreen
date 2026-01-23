@@ -44,6 +44,39 @@ class ScreenClient
         if (parsed.Command == Command.Help)
             return ShowHelp();
 
+        // Nested session 감지 (WINSCREEN 환경 변수 확인)
+        var winscreenEnv = Environment.GetEnvironmentVariable("WINSCREEN");
+        if (!string.IsNullOrEmpty(winscreenEnv) && !parsed.ForceNewSession)
+        {
+            // nested session에서 허용되는 명령
+            var allowedCommands = new[]
+            {
+                Command.List, Command.ListProfiles, Command.Help,
+                Command.ServerStatus, Command.ServerStop,
+                Command.ProfileShow, Command.GetDefault
+            };
+
+            if (!allowedCommands.Contains(parsed.Command) && parsed.Command != Command.None)
+            {
+                // 명령이 지정되지 않은 경우 (screen만 실행)도 에러
+            }
+            else if (allowedCommands.Contains(parsed.Command))
+            {
+                // 허용된 명령은 그대로 진행
+            }
+            else
+            {
+                Console.Error.WriteLine("Warning: Already inside a WinScreen session.");
+                Console.Error.WriteLine($"  Current session: {winscreenEnv}");
+                Console.Error.WriteLine();
+                Console.Error.WriteLine("Options:");
+                Console.Error.WriteLine("  screen -m         Force create a new nested session");
+                Console.Error.WriteLine("  screen -ls        List all sessions");
+                Console.Error.WriteLine("  Ctrl+A, D         Detach from current session");
+                return 1;
+            }
+        }
+
         if (parsed.Command == Command.ServerStatus)
             return await CheckServerStatus();
 
@@ -796,7 +829,9 @@ class ScreenClient
             // Ctrl+C는 터미널로 전달
         };
 
-        // 스크롤백 버퍼 출력 (VT 모드 설정 후)
+        // 화면 클리어 후 스크롤백 버퍼 출력
+        Console.Write("\x1b[2J\x1b[H");  // Clear screen and move cursor to home
+
         if (scrollbackBuffer != null && scrollbackBuffer.Length > 0)
         {
             var scrollbackText = System.Text.Encoding.UTF8.GetString(scrollbackBuffer);
@@ -1242,7 +1277,11 @@ Examples:
                 case "--wipe":
                     result.Command = Command.Wipe;
                     break;
-                    
+
+                case "-m":
+                    result.ForceNewSession = true;
+                    break;
+
                 case "--profiles":
                     result.Command = Command.ListProfiles;
                     break;
@@ -1319,8 +1358,15 @@ Examples:
                     break;
                     
                 default:
+                    // 알 수 없는 옵션은 에러
+                    if (arg.StartsWith("-"))
+                    {
+                        Console.Error.WriteLine($"Error: Unknown option '{arg}'");
+                        Console.Error.WriteLine("Use 'screen --help' for usage information.");
+                        Environment.Exit(1);
+                    }
                     // 위치 인자로 세션 이름 또는 ID
-                    if (!arg.StartsWith("-") && result.SessionId == null)
+                    if (result.SessionId == null)
                     {
                         if (result.Command == Command.None)
                         {
@@ -1366,6 +1412,7 @@ class ParsedArgs
     public string? SessionName { get; set; }
     public string? Profile { get; set; }
     public string? WorkingDirectory { get; set; }
+    public bool ForceNewSession { get; set; }
 
     // Profile management args
     public string? ProfileName { get; set; }
