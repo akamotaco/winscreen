@@ -9,15 +9,26 @@ namespace WinScreen.Server;
 
 class Program
 {
+    private const string MutexName = "Global\\WinScreenServer_SingleInstance";
+
     private static readonly SessionManager _sessionManager = new();
     private static readonly ProfileStore _profileStore = new();
     private static readonly ConcurrentDictionary<string, ClientHandler> _clients = new();
     private static readonly CancellationTokenSource _cts = new();
-    
+
     static async Task Main(string[] args)
     {
+        // 단일 인스턴스 보장을 위한 Mutex
+        using var mutex = new Mutex(true, MutexName, out bool createdNew);
+
+        if (!createdNew)
+        {
+            Console.WriteLine("WinScreen Server is already running.");
+            return;
+        }
+
         Console.WriteLine($"WinScreen Server v{Constants.Version} starting...");
-        
+
         // Ctrl+C 핸들러
         Console.CancelKeyPress += (_, e) =>
         {
@@ -173,8 +184,13 @@ class ClientHandler
         }
         finally
         {
-            // 세션에서 detach
-            _attachedSession?.Detach(_clientId);
+            // 이벤트 핸들러 해제 후 세션에서 detach
+            if (_attachedSession != null)
+            {
+                _attachedSession.OutputReceived -= OnSessionOutput;
+                _attachedSession.SessionEnded -= OnSessionEndedWhileAttached;
+                _attachedSession.Detach(_clientId);
+            }
             _pipe.Dispose();
         }
     }

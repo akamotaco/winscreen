@@ -16,6 +16,7 @@ public sealed class Session : IDisposable
     private readonly CancellationTokenSource _cts = new();
     private readonly MemoryStream _scrollbackBuffer = new();
     private readonly object _scrollbackLock = new();
+    private readonly object _attachLock = new();
     private readonly FileStream _inputStream;
     private readonly FileStream _outputStream;
     
@@ -184,15 +185,17 @@ public sealed class Session : IDisposable
     /// </summary>
     public bool Attach(string clientId, short cols, short rows)
     {
-        if (IsAttached && AttachedClientId != clientId)
+        lock (_attachLock)
         {
-            // 이미 다른 클라이언트가 연결됨
-            // 기존 연결을 강제로 끊을 수도 있음
-            return false;
+            if (IsAttached && AttachedClientId != clientId)
+            {
+                // 이미 다른 클라이언트가 연결됨
+                return false;
+            }
+
+            AttachedClientId = clientId;
         }
 
-        AttachedClientId = clientId;
-        
         try
         {
             _pty.Resize(cols, rows);
@@ -210,9 +213,12 @@ public sealed class Session : IDisposable
     /// </summary>
     public void Detach(string? clientId = null)
     {
-        if (clientId == null || AttachedClientId == clientId)
+        lock (_attachLock)
         {
-            AttachedClientId = null;
+            if (clientId == null || AttachedClientId == clientId)
+            {
+                AttachedClientId = null;
+            }
         }
     }
 
