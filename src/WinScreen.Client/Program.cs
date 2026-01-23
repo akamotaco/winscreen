@@ -94,7 +94,7 @@ class ScreenClient
             Command.List => await ListSessions(),
             Command.ListProfiles => await ListProfiles(),
             Command.Create => await CreateAndAttach(parsed),
-            Command.Attach => await AttachToSession(parsed.SessionId),
+            Command.Attach => await AttachToSession(parsed.SessionId, parsed.ForceDetach),
             Command.AttachOrCreate => await AttachOrCreate(parsed),
             Command.Detach => await DetachSession(parsed.SessionId),
             Command.Kill => await KillSession(parsed.SessionId!),
@@ -716,12 +716,12 @@ class ScreenClient
         return 1;
     }
 
-    private async Task<int> AttachToSession(string? sessionId)
+    private async Task<int> AttachToSession(string? sessionId, bool forceDetach = false)
     {
         // 세션 ID가 지정된 경우 바로 연결
         if (!string.IsNullOrEmpty(sessionId))
         {
-            return await AttachToSessionInternal(sessionId);
+            return await AttachToSessionInternal(sessionId, forceDetach);
         }
 
         // 세션 ID가 없으면 목록에서 자동 선택 (detached 세션만)
@@ -757,7 +757,7 @@ class ScreenClient
             {
                 var session = detachedSessions[0];
                 Console.WriteLine($"Attaching to session: {session.Name}");
-                return await AttachToSessionInternal(session.Id);
+                return await AttachToSessionInternal(session.Id, forceDetach);
             }
 
             // detached 세션이 여러 개면 목록 표시
@@ -783,13 +783,14 @@ class ScreenClient
         return 1;
     }
 
-    private async Task<int> AttachToSessionInternal(string sessionId)
+    private async Task<int> AttachToSessionInternal(string sessionId, bool forceDetach = false)
     {
         var attachMsg = new AttachMessage
         {
             SessionId = sessionId,
             Cols = (short)Console.WindowWidth,
-            Rows = (short)Console.WindowHeight
+            Rows = (short)Console.WindowHeight,
+            ForceDetach = forceDetach
         };
         
         await ProtocolSerializer.SendAsync(_pipe!, attachMsg, _cts.Token);
@@ -1130,9 +1131,9 @@ Commands:
   -ls, -list           List all sessions
   -r, -resume [id]     Attach to detached session (auto-select if only one)
   -R [id]              Attach or create if no session exists
+  -d -r <id>           Force detach and reattach (kick other client)
   -S <name>            Create session with name
   -p <profile>         Use profile (cmd, powershell, pwsh, conda, etc.)
-  -d <id>              Detach session
   -X kill <id>         Kill session
   -wipe                Kill all sessions
 
@@ -1171,6 +1172,7 @@ Examples:
   screen -ls                List sessions
   screen -r mywork          Attach to 'mywork' session
   screen -r abc123          Attach to session by ID
+  screen -d -r mywork       Force reattach (disconnect other client)
 ");
         return 0;
     }
@@ -1260,8 +1262,9 @@ Examples:
                     
                 case "-d":
                 case "--detach":
-                    result.Command = Command.Detach;
-                    if (i + 1 < args.Length) result.SessionId = args[++i];
+                    // -d 단독: 원격 분리, -d -r 조합: 강제 분리 후 연결
+                    result.ForceDetach = true;
+                    // -r과 함께 사용되지 않으면 나중에 Command.Detach로 설정됨
                     break;
                     
                 case "-x":
@@ -1377,7 +1380,18 @@ Examples:
                     break;
             }
         }
-        
+
+        // -d 플래그 처리: -r과 함께 사용되지 않으면 원격 분리 명령
+        // -d -r: ForceDetach = true, Command = Attach (이미 설정됨)
+        // -d만: ForceDetach = true이지만 Command != Attach면 원격 분리 시도 (지원 안함)
+        // 참고: GNU screen은 -d만 사용시 원격 분리 지원하지만, 여기서는 -d -r 조합만 지원
+        if (result.ForceDetach && result.Command != Command.Attach && result.Command != Command.AttachOrCreate)
+        {
+            Console.Error.WriteLine("Note: Use '-d -r' to force detach and reattach.");
+            Console.Error.WriteLine("Example: screen -d -r sessionname");
+            result.ForceDetach = false;
+        }
+
         return result;
     }
 }
@@ -1413,6 +1427,8 @@ class ParsedArgs
     public string? Profile { get; set; }
     public string? WorkingDirectory { get; set; }
     public bool ForceNewSession { get; set; }
+    /// <summary>-d 옵션: 강제 분리 (다른 클라이언트 연결 중이면 분리 후 연결)</summary>
+    public bool ForceDetach { get; set; }
 
     // Profile management args
     public string? ProfileName { get; set; }

@@ -111,6 +111,8 @@ public class AttachMessage : ClientMessage
     public required string SessionId { get; set; }
     public short Rows { get; set; } = 24;
     public short Cols { get; set; } = 80;
+    /// <summary>다른 클라이언트가 연결 중이면 강제로 분리 (GNU screen -d -r)</summary>
+    public bool ForceDetach { get; set; }
 }
 
 public class DetachMessage : ClientMessage

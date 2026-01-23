@@ -140,7 +140,11 @@ class ClientHandler
     private readonly SessionManager _sessionManager;
     private readonly ProfileStore _profileStore;
     private readonly SemaphoreSlim _writeLock = new(1, 1);
-    
+
+    // Attach 중 출력 버퍼링을 위한 필드
+    private readonly ConcurrentQueue<byte[]> _attachingOutput = new();
+    private volatile bool _isAttaching;
+
     private Session? _attachedSession;
 
     public ClientHandler(
@@ -312,9 +316,12 @@ class ClientHandler
             return;
         }
 
-        if (!session.Attach(_clientId, msg.Cols, msg.Rows))
+        if (!session.Attach(_clientId, msg.Cols, msg.Rows, msg.ForceDetach))
         {
-            await SendAsync(new ErrorMessage { Message = "Session is already attached by another client" }, ct);
+            await SendAsync(new ErrorMessage
+            {
+                Message = $"Session '{session.Name}' is already attached by another client.\nUse 'screen -d -r {session.Name}' to force detach and reattach."
+            }, ct);
             return;
         }
 
@@ -322,17 +329,30 @@ class ClientHandler
 
         Console.WriteLine($"[{_clientId[..8]}] Attached to session: {session.Name}");
 
-        // 스크롤백 버퍼와 함께 응답 (이벤트 구독 전에 먼저 전송!)
+        // Race condition 방지: 이벤트 구독 -> 스크롤백 -> 전송 -> 버퍼 flush
+        // 1. 버퍼링 모드 시작
+        _isAttaching = true;
+
+        // 2. 이벤트 먼저 구독 (이 시점부터 출력은 _attachingOutput에 큐잉됨)
+        session.OutputReceived += OnSessionOutput;
+        session.SessionEnded += OnSessionEndedWhileAttached;
+
+        // 3. 스크롤백 버퍼 가져오기 (이벤트 구독 후이므로 새 출력은 큐에 들어감)
         var scrollback = session.GetScrollbackBuffer();
+
+        // 4. AttachedMessage 전송
         await SendAsync(new AttachedMessage
         {
             Session = session.ToInfo(),
             ScrollbackBuffer = scrollback.Length > 0 ? scrollback : null
         }, ct);
 
-        // AttachedMessage 전송 후 이벤트 구독 (순서 중요!)
-        session.OutputReceived += OnSessionOutput;
-        session.SessionEnded += OnSessionEndedWhileAttached;
+        // 5. 버퍼링 모드 종료 및 큐잉된 출력 전송
+        _isAttaching = false;
+        while (_attachingOutput.TryDequeue(out var bufferedData))
+        {
+            await SendAsync(new OutputMessage { Data = bufferedData }, ct);
+        }
     }
 
     private async Task HandleDetach(CancellationToken ct)
@@ -479,6 +499,13 @@ class ClientHandler
 
     private async void OnSessionOutput(byte[] data)
     {
+        // Attach 진행 중이면 버퍼에 큐잉 (race condition 방지)
+        if (_isAttaching)
+        {
+            _attachingOutput.Enqueue(data);
+            return;
+        }
+
         try
         {
             await SendAsync(new OutputMessage { Data = data }, CancellationToken.None);

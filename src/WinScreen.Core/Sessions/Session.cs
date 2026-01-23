@@ -189,26 +189,45 @@ public sealed class Session : IDisposable
     /// <summary>
     /// 클라이언트 연결
     /// </summary>
-    public bool Attach(string clientId, short cols, short rows)
+    /// <param name="clientId">연결할 클라이언트 ID</param>
+    /// <param name="cols">터미널 너비</param>
+    /// <param name="rows">터미널 높이</param>
+    /// <param name="forceDetach">true면 기존 연결을 강제로 분리 (GNU screen -d -r)</param>
+    /// <returns>성공 여부. forceDetach=false이고 다른 클라이언트가 연결 중이면 false</returns>
+    public bool Attach(string clientId, short cols, short rows, bool forceDetach = false)
     {
+        string? previousClientId = null;
+
         lock (_attachLock)
         {
             if (IsAttached && AttachedClientId != clientId)
             {
-                // 이미 다른 클라이언트가 연결됨
-                return false;
+                if (!forceDetach)
+                {
+                    // 이미 다른 클라이언트가 연결됨
+                    return false;
+                }
+                // 강제 분리
+                previousClientId = AttachedClientId;
             }
 
             AttachedClientId = clientId;
+
+            // Resize를 lock 안에서 수행하여 Detach와의 race condition 방지
+            try
+            {
+                _pty.Resize(cols, rows);
+            }
+            catch
+            {
+                // 리사이즈 실패해도 연결은 유지
+            }
         }
 
-        try
+        // 강제 분리된 경우 로그 (lock 밖에서 출력)
+        if (previousClientId != null)
         {
-            _pty.Resize(cols, rows);
-        }
-        catch
-        {
-            // 리사이즈 실패해도 연결은 유지
+            Console.WriteLine($"[Session {Id[..8]}] Force detached client {previousClientId[..8]}");
         }
 
         return true;
@@ -242,7 +261,15 @@ public sealed class Session : IDisposable
     /// </summary>
     public void Resize(short cols, short rows)
     {
-        _pty.Resize(cols, rows);
+        if (_disposed) return;
+        try
+        {
+            _pty.Resize(cols, rows);
+        }
+        catch (ObjectDisposedException)
+        {
+            // 세션이 dispose된 경우 무시
+        }
     }
 
     /// <summary>
