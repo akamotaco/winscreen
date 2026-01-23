@@ -347,10 +347,10 @@ screen --profile-reset
 | `--startup <cmd>` | Command to run at startup |
 | `--desc <text>` | Profile description |
 
-> **Note for Conda/Miniconda users**: To use `conda activate` in `cmd.exe`,
-> you need the `--args "/K"` option. The `/K` option keeps the shell running after command execution.
+> **Note**: When using `--startup`, `/K` is automatically added for cmd.exe, and `-NoExit -Command` for PowerShell.
+> Do NOT use `--args "/K"` together with `--startup` as it causes duplication errors.
 >
-> Example: `screen --profile-add myconda --shell cmd.exe --args "/K" --startup "conda activate myenv"`
+> Example: `screen --profile-add myconda --shell cmd.exe --startup "conda activate myenv"`
 
 ### Editing Profiles via JSON
 
@@ -370,7 +370,6 @@ Edit `profiles.json` directly for more complex profiles:
       "name": "myenv",
       "description": "My Python Environment",
       "shell": "cmd.exe",
-      "arguments": "/K",
       "startupCommand": "conda activate myenv",
       "workingDirectory": "C:\\Projects",
       "environment": {

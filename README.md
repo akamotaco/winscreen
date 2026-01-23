@@ -345,10 +345,10 @@ screen --profile-reset
 | `--startup <cmd>` | 시작 시 실행할 명령어 |
 | `--desc <text>` | 프로필 설명 |
 
-> **Conda/Miniconda 사용자 참고**: `cmd.exe`에서 `conda activate`를 사용하려면
-> `--args "/K"` 옵션이 필요합니다. `/K` 옵션은 명령 실행 후 쉘을 유지합니다.
+> **Note**: `--startup` 옵션 사용 시 cmd.exe는 자동으로 `/K`가 추가되고, PowerShell은 `-NoExit -Command`가 추가됩니다.
+> `--args "/K"`를 함께 사용하면 중복되어 에러가 발생합니다.
 >
-> 예시: `screen --profile-add myconda --shell cmd.exe --args "/K" --startup "conda activate myenv"`
+> 예시: `screen --profile-add myconda --shell cmd.exe --startup "conda activate myenv"`
 
 ### JSON으로 프로필 편집
 
@@ -368,7 +368,6 @@ screen --profile-reset
       "name": "myenv",
       "description": "My Python Environment",
       "shell": "cmd.exe",
-      "arguments": "/K",
       "startupCommand": "conda activate myenv",
       "workingDirectory": "C:\\Projects",
       "environment": {
