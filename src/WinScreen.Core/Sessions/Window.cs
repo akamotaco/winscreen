@@ -168,9 +168,23 @@ public sealed class Window : IDisposable
             if (_scrollbackBuffer.Length + data.Length > _maxScrollbackSize)
             {
                 var excess = (int)(_scrollbackBuffer.Length + data.Length - _maxScrollbackSize);
-                var existing = _scrollbackBuffer.ToArray();
-                _scrollbackBuffer.SetLength(0);
-                _scrollbackBuffer.Write(existing, excess, existing.Length - excess);
+                var currentLength = (int)_scrollbackBuffer.Length;
+                var keepLength = currentLength - excess;
+
+                if (keepLength > 0)
+                {
+                    // GetBuffer()로 내부 버퍼 직접 접근 (복사 없음)
+                    var buffer = _scrollbackBuffer.GetBuffer();
+                    // 유지할 부분을 버퍼 앞쪽으로 이동
+                    Buffer.BlockCopy(buffer, excess, buffer, 0, keepLength);
+                    _scrollbackBuffer.SetLength(keepLength);
+                    _scrollbackBuffer.Position = keepLength;
+                }
+                else
+                {
+                    _scrollbackBuffer.SetLength(0);
+                    _scrollbackBuffer.Position = 0;
+                }
             }
 
             _scrollbackBuffer.Write(data);

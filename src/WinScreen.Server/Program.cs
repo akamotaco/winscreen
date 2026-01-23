@@ -142,6 +142,7 @@ class ClientHandler
     private readonly SemaphoreSlim _writeLock = new(1, 1);
 
     // Attach 중 출력 버퍼링을 위한 필드
+    private const int MaxAttachingOutputQueueSize = 1000;
     private readonly ConcurrentQueue<byte[]> _attachingOutput = new();
     private volatile bool _isAttaching;
 
@@ -318,16 +319,19 @@ class ClientHandler
         var profile = _profileStore.GetOrDefault(msg.ProfileName);
         var workingDir = msg.WorkingDirectory ?? profile.WorkingDirectory ?? Environment.CurrentDirectory;
 
-        // 세션 이름 중복 확인
+        // 세션 이름 중복 시 자동으로 고유 이름 생성
         string? warning = null;
-        if (!string.IsNullOrEmpty(msg.SessionName) && _sessionManager.ExistsByName(msg.SessionName))
+        var sessionName = msg.SessionName;
+        if (!string.IsNullOrEmpty(sessionName) && _sessionManager.ExistsByName(sessionName))
         {
-            warning = $"Warning: Session name '{msg.SessionName}' already exists. Creating with duplicate name.";
+            var uniqueName = _sessionManager.GetUniqueSessionName(sessionName);
+            warning = $"Session name '{sessionName}' already exists. Created as '{uniqueName}' instead.";
             Console.WriteLine($"[{_clientId[..8]}] {warning}");
+            sessionName = uniqueName;
         }
 
         var session = _sessionManager.Create(
-            msg.SessionName,
+            sessionName,
             profile.GetCommandLine(),
             workingDir,
             profile.Name,
@@ -739,11 +743,20 @@ class ClientHandler
         }
 
         var oldName = _attachedSession.Name;
-        _attachedSession.Name = msg.NewName;
+        var newName = msg.NewName;
 
-        Console.WriteLine($"[{_clientId[..8]}] Renamed session '{oldName}' to '{msg.NewName}'");
+        // 중복 이름 체크 (자기 자신 제외)
+        if (_sessionManager.ExistsByName(newName) &&
+            !newName.Equals(oldName, StringComparison.OrdinalIgnoreCase))
+        {
+            newName = _sessionManager.GetUniqueSessionName(newName);
+        }
 
-        await SendAsync(new SessionRenamedMessage { NewName = msg.NewName }, ct);
+        _attachedSession.Name = newName;
+
+        Console.WriteLine($"[{_clientId[..8]}] Renamed session '{oldName}' to '{newName}'");
+
+        await SendAsync(new SessionRenamedMessage { NewName = newName }, ct);
     }
 
     private async void OnWindowEndedWhileAttached(int windowIndex, int exitCode)
@@ -830,6 +843,11 @@ class ClientHandler
         // Attach 진행 중이면 버퍼에 큐잉 (race condition 방지)
         if (_isAttaching)
         {
+            // 큐 사이즈 제한: 너무 많으면 오래된 항목 제거
+            while (_attachingOutput.Count >= MaxAttachingOutputQueueSize)
+            {
+                _attachingOutput.TryDequeue(out _);
+            }
             _attachingOutput.Enqueue(data);
             return;
         }

@@ -582,6 +582,26 @@ public class SessionManager : IDisposable
     public bool ExistsByName(string name) =>
         _sessions.Values.Any(s => s.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
 
+    /// <summary>
+    /// 고유한 세션 이름 생성 (중복 시 숫자 접미사 추가)
+    /// </summary>
+    public string GetUniqueSessionName(string baseName)
+    {
+        if (!ExistsByName(baseName))
+            return baseName;
+
+        // 중복 시 (2), (3), ... 접미사 추가
+        var counter = 2;
+        string candidateName;
+        do
+        {
+            candidateName = $"{baseName} ({counter})";
+            counter++;
+        } while (ExistsByName(candidateName));
+
+        return candidateName;
+    }
+
     public IEnumerable<Session> GetAll() => _sessions.Values;
 
     public IEnumerable<SessionInfo> GetAllInfo() => _sessions.Values.Select(s => s.ToInfo());
