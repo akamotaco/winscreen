@@ -98,7 +98,7 @@ class ScreenClient
             Command.AttachOrCreate => await AttachOrCreate(parsed),
             Command.Detach => await DetachSession(parsed.SessionId),
             Command.Kill => await KillSession(parsed.SessionId!),
-            Command.Wipe => await WipeAllSessions(),
+            Command.KillAll => await KillAllSessions(),
             Command.ProfileAdd => await AddProfile(parsed),
             Command.ProfileRemove => await RemoveProfile(parsed.ProfileName),
             Command.ProfileShow => await ShowProfile(parsed.ProfileName),
@@ -1190,7 +1190,7 @@ class ScreenClient
         return 1;
     }
 
-    private async Task<int> WipeAllSessions()
+    private async Task<int> KillAllSessions()
     {
         await ProtocolSerializer.SendAsync(_pipe!, new ListSessionsMessage(), _cts.Token);
         var response = await ProtocolSerializer.DeserializeAsync<ServerMessage>(_pipe!, _cts.Token);
@@ -1225,8 +1225,8 @@ Commands:
   -d -r <id>           Force detach and reattach (kick other client)
   -S <name>            Create session with name
   -p <profile>         Use profile (cmd, powershell, pwsh, conda, etc.)
-  -X kill <id>         Kill session
-  -wipe                Kill all sessions
+  -X kill <id>         Kill a session
+  -X kill-all          Kill all sessions
 
 Server Management:
   --server             Check server status
@@ -1359,17 +1359,21 @@ Examples:
                     break;
                     
                 case "-x":
-                    if (i + 1 < args.Length && args[i + 1].ToLowerInvariant() == "kill")
+                    if (i + 1 < args.Length)
                     {
-                        i++;
-                        result.Command = Command.Kill;
-                        if (i + 1 < args.Length) result.SessionId = args[++i];
+                        var subCmd = args[i + 1].ToLowerInvariant();
+                        if (subCmd == "kill")
+                        {
+                            i++;
+                            result.Command = Command.Kill;
+                            if (i + 1 < args.Length) result.SessionId = args[++i];
+                        }
+                        else if (subCmd == "kill-all")
+                        {
+                            i++;
+                            result.Command = Command.KillAll;
+                        }
                     }
-                    break;
-                    
-                case "-wipe":
-                case "--wipe":
-                    result.Command = Command.Wipe;
                     break;
 
                 case "-m":
@@ -1497,7 +1501,7 @@ enum Command
     AttachOrCreate,
     Detach,
     Kill,
-    Wipe,
+    KillAll,
     Help,
     ServerStatus,
     ServerStart,

@@ -122,7 +122,7 @@ screen -d -r mywork
 screen -X kill mywork
 
 # 모든 세션 종료
-screen -wipe
+screen -X kill-all
 
 # 사용 가능한 프로필 보기
 screen --profiles
