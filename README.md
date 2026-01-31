@@ -409,7 +409,7 @@ screen --profile-reset
 | `-ls` | ✅ | ✅ | 세션 목록 |
 | `-X kill` | ✅ | ✅ | 세션 종료 |
 | `-X kill-all` | ❌ | ✅ | WinScreen 전용 |
-| `-m` | ✅ | ✅ | nested 세션 강제 생성 |
+| `-m` | ✅ | ⚠️ | GNU: nested 세션, WinScreen: 세션 전환 (기존 세션 detach 후 새 세션 생성) |
 
 ### 키 바인딩 호환성 (Ctrl+A 후)
 
@@ -467,10 +467,11 @@ screen --profile-reset
 - **서버 종료 시 세션 손실**: WinScreen 서버가 종료되면 모든 세션이 함께 종료됩니다
   - 중요한 작업은 정기적으로 저장하세요
   - `screen --server-stop` 전에 세션을 확인하세요
-- **Nested Session**: 이미 screen 세션 안에서 `screen`을 실행하면 경고가 표시됩니다
-  - `screen -m` 옵션으로 강제로 새 세션을 생성할 수 있습니다
+- **세션 내 screen 실행**: 세션 안에서 `screen`을 실행하면 기존 세션을 detach하고 새 세션으로 전환됩니다
+  - ConPTY 구조상 GNU Screen 방식의 nested session은 지원되지 않습니다
   - 세션 내에서 `screen -X kill-all`, `screen --server-stop` 등 위험한 명령은 차단됩니다
-  - `screen -ls`, `screen --profiles` 등 읽기 전용 명령은 허용됩니다
+  - `screen -ls`, `screen --profiles`, `screen --set-default` 등 조회/프로필 관리 명령은 허용됩니다
+  - `screen -d -m` 백그라운드 세션 생성도 허용됩니다
 - **세션 이름 중복**: 같은 이름의 세션을 생성하면 경고가 표시됩니다
   - 세션은 생성되지만 `-r` 사용 시 ID로 구분해야 할 수 있습니다
 

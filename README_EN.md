@@ -411,7 +411,7 @@ Edit `profiles.json` directly for more complex profiles:
 | `-ls` | ✅ | ✅ | List sessions |
 | `-X kill` | ✅ | ✅ | Kill session |
 | `-X kill-all` | ❌ | ✅ | WinScreen only |
-| `-m` | ✅ | ✅ | Force new nested session |
+| `-m` | ✅ | ⚠️ | GNU: nested session, WinScreen: session switch (detach current, create new) |
 
 ### Key Binding Compatibility (After Ctrl+A)
 
@@ -469,10 +469,11 @@ Edit `profiles.json` directly for more complex profiles:
 - **Session loss on server stop**: All sessions terminate when WinScreen server stops
   - Save important work regularly
   - Check sessions before `screen --server-stop`
-- **Nested Session**: Warning displayed when running `screen` inside a screen session
-  - Use `screen -m` to force create new session
+- **Running screen inside a session**: Running `screen` inside a session detaches from the current session and switches to a new one
+  - GNU Screen-style nested sessions are not supported due to ConPTY architecture
   - Dangerous commands like `screen -X kill-all`, `screen --server-stop` are blocked inside sessions
-  - Read-only commands like `screen -ls`, `screen --profiles` are allowed
+  - Query and profile management commands like `screen -ls`, `screen --profiles`, `screen --set-default` are allowed
+  - Background session creation with `screen -d -m` is also allowed
 - **Duplicate session names**: Warning displayed when creating session with existing name
   - Session is created but may need ID to distinguish with `-r`
 

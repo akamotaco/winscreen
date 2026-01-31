@@ -51,17 +51,31 @@ class ScreenClient
         if (parsed.Command == Command.Help)
             return ShowHelp();
 
-        // Nested session 감지 (WINSCREEN 환경 변수 확인)
+        // 세션 내부 감지 (WINSCREEN 환경 변수 확인)
         var winscreenEnv = Environment.GetEnvironmentVariable("WINSCREEN");
-        if (!string.IsNullOrEmpty(winscreenEnv) && !parsed.ForceNewSession)
+        if (!string.IsNullOrEmpty(winscreenEnv))
         {
-            // nested session에서 허용되는 명령
+            // 세션 생성/연결 명령은 부모 클라이언트의 세션을 전환하는 방식으로 처리
+            var switchCommands = new[]
+            {
+                Command.Create, Command.AttachOrCreate
+            };
+
+            if (switchCommands.Contains(parsed.Command))
+            {
+                return await RequestSessionSwitch(parsed, winscreenEnv);
+            }
+
+            // 세션 내에서 허용되는 명령 (조회 + 프로필 관리 + 백그라운드 세션 생성)
             // ServerStop, KillAll 등 위험한 명령은 제외 - 자기 세션을 죽이는 실수 방지
             var allowedCommands = new[]
             {
                 Command.List, Command.ListProfiles, Command.Help,
                 Command.ServerStatus,
-                Command.ProfileShow, Command.GetDefault
+                Command.ProfileShow, Command.GetDefault,
+                Command.SetDefault, Command.ProfileAdd,
+                Command.ProfileRemove, Command.ProfileReset,
+                Command.CreateDetached
             };
 
             if (!allowedCommands.Contains(parsed.Command))
@@ -69,9 +83,8 @@ class ScreenClient
                 Console.Error.WriteLine("Warning: Already inside a WinScreen session.");
                 Console.Error.WriteLine($"  Current session: {winscreenEnv}");
                 Console.Error.WriteLine();
-                Console.Error.WriteLine("Options:");
-                Console.Error.WriteLine("  screen -m         Force create a new nested session");
                 Console.Error.WriteLine("  screen -ls        List all sessions");
+                Console.Error.WriteLine("  screen -d -m      Create background session");
                 Console.Error.WriteLine("  Ctrl+A, D         Detach from current session");
                 return 1;
             }
@@ -712,6 +725,53 @@ class ScreenClient
         }
     }
 
+    /// <summary>
+    /// 세션 내부에서 새 세션 생성 요청 (부모 클라이언트의 세션을 전환)
+    /// </summary>
+    private async Task<int> RequestSessionSwitch(ParsedArgs args, string winscreenEnv)
+    {
+        try
+        {
+            // WINSCREEN 환경변수에서 세션 ID 추출 (형식: "sessionId8.name")
+            var parentSessionId = winscreenEnv.Split('.')[0];
+
+            await EnsureServerRunning();
+
+            var msg = new RequestSessionSwitchMessage
+            {
+                ParentSessionId = parentSessionId,
+                SessionName = args.SessionName,
+                ProfileName = args.Profile,
+                WorkingDirectory = args.WorkingDirectory ?? Environment.CurrentDirectory,
+                Cols = (short)Console.WindowWidth,
+                Rows = (short)Console.WindowHeight,
+                ClientExecutablePath = AppDomain.CurrentDomain.BaseDirectory
+            };
+
+            await ProtocolSerializer.SendAsync(_pipe!, msg, _cts.Token);
+            var response = await ProtocolSerializer.DeserializeAsync<ServerMessage>(_pipe!, _cts.Token);
+
+            if (response is ProfileOkMessage ok)
+            {
+                Console.WriteLine(ok.Message);
+                return 0;
+            }
+
+            if (response is ErrorMessage error)
+            {
+                Console.Error.WriteLine($"Error: {error.Message}");
+                return 1;
+            }
+
+            return 1;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Error: {ex.Message}");
+            return 1;
+        }
+    }
+
     private async Task<int> AttachOrCreate(ParsedArgs args)
     {
         // 세션 목록 가져오기
@@ -973,6 +1033,16 @@ class ScreenClient
                         case SessionRenamedMessage sessionRenamed:
                             // NOTE: 커서 위치 불일치 방지를 위해 비활성화 (위 주석 참조)
                             // Console.Write($"\r\n[Session renamed to '{sessionRenamed.NewName}']\r\n");
+                            break;
+
+                        case SwitchSessionMessage switchSession:
+                            // 세션 전환: 화면 클리어 후 새 세션 출력
+                            Console.Write("\x1b[2J\x1b[H");
+                            if (switchSession.ScrollbackBuffer != null && switchSession.ScrollbackBuffer.Length > 0)
+                            {
+                                var switchText = System.Text.Encoding.UTF8.GetString(switchSession.ScrollbackBuffer);
+                                Console.Write(switchText);
+                            }
                             break;
                     }
                 }

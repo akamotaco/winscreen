@@ -75,7 +75,7 @@ class Program
                 var clientId = Guid.NewGuid().ToString("N");
                 Console.WriteLine($"[{clientId[..8]}] Client connected");
                 
-                var handler = new ClientHandler(clientId, pipeServer, _sessionManager, _profileStore);
+                var handler = new ClientHandler(clientId, pipeServer, _sessionManager, _profileStore, _clients);
                 _clients[clientId] = handler;
                 
                 // 비동기로 클라이언트 처리
@@ -139,6 +139,7 @@ class ClientHandler
     private readonly NamedPipeServerStream _pipe;
     private readonly SessionManager _sessionManager;
     private readonly ProfileStore _profileStore;
+    private readonly ConcurrentDictionary<string, ClientHandler> _allClients;
     private readonly SemaphoreSlim _writeLock = new(1, 1);
 
     // Attach 중 출력 버퍼링을 위한 필드
@@ -148,6 +149,9 @@ class ClientHandler
 
     private Session? _attachedSession;
 
+    /// <summary>현재 연결된 세션 ID (세션 전환 시 부모 클라이언트 찾기용)</summary>
+    public string? AttachedSessionId => _attachedSession?.Id;
+
     // 현재 클라이언트 터미널 크기 (윈도우 전환 시 리사이즈용)
     private short _terminalCols;
     private short _terminalRows;
@@ -156,12 +160,14 @@ class ClientHandler
         string clientId,
         NamedPipeServerStream pipe,
         SessionManager sessionManager,
-        ProfileStore profileStore)
+        ProfileStore profileStore,
+        ConcurrentDictionary<string, ClientHandler> allClients)
     {
         _clientId = clientId;
         _pipe = pipe;
         _sessionManager = sessionManager;
         _profileStore = profileStore;
+        _allClients = allClients;
     }
 
     public async Task RunAsync(CancellationToken ct)
@@ -303,6 +309,10 @@ class ClientHandler
 
                 case RenameSessionMessage renameSession:
                     await HandleRenameSession(renameSession, ct);
+                    break;
+
+                case RequestSessionSwitchMessage switchReq:
+                    await HandleRequestSessionSwitch(switchReq, ct);
                     break;
             }
         }
@@ -802,6 +812,126 @@ class ClientHandler
         Console.WriteLine($"[{_clientId[..8]}] Renamed session '{oldName}' to '{newName}'");
 
         await SendAsync(new SessionRenamedMessage { NewName = newName }, ct);
+    }
+
+    private async Task HandleRequestSessionSwitch(RequestSessionSwitchMessage msg, CancellationToken ct)
+    {
+        // 1. 부모 클라이언트 찾기 (ParentSessionId는 8자리 축약형)
+        var parentHandler = _allClients.Values.FirstOrDefault(c =>
+            c != this &&
+            c.AttachedSessionId != null &&
+            c.AttachedSessionId.StartsWith(msg.ParentSessionId, StringComparison.OrdinalIgnoreCase));
+
+        if (parentHandler == null)
+        {
+            await SendAsync(new ErrorMessage { Message = "Parent session not found or not attached." }, ct);
+            return;
+        }
+
+        // 2. 새 세션 생성 (HandleCreateSession과 동일한 로직)
+        var profile = _profileStore.GetOrDefault(msg.ProfileName);
+        var workingDir = msg.WorkingDirectory ?? profile.WorkingDirectory ?? Environment.CurrentDirectory;
+
+        string? warning = null;
+        var sessionName = msg.SessionName;
+        if (!string.IsNullOrEmpty(sessionName) && _sessionManager.ExistsByName(sessionName))
+        {
+            var uniqueName = _sessionManager.GetUniqueSessionName(sessionName);
+            warning = $"Session name '{sessionName}' already exists. Created as '{uniqueName}' instead.";
+            Console.WriteLine($"[{_clientId[..8]}] {warning}");
+            sessionName = uniqueName;
+        }
+
+        // 환경 변수 준비
+        var environment = profile.Environment != null
+            ? new Dictionary<string, string>(profile.Environment)
+            : new Dictionary<string, string>();
+
+        if (!string.IsNullOrEmpty(msg.ClientExecutablePath))
+        {
+            var currentPath = Environment.GetEnvironmentVariable("PATH") ?? "";
+            if (!currentPath.Split(';').Any(p => p.Equals(msg.ClientExecutablePath.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase)))
+            {
+                environment["PATH"] = msg.ClientExecutablePath.TrimEnd('\\') + ";" + currentPath;
+            }
+        }
+
+        var session = _sessionManager.Create(
+            sessionName,
+            profile.GetCommandLine(),
+            workingDir,
+            profile.Name,
+            environment.Count > 0 ? environment : null,
+            msg.Cols,
+            msg.Rows,
+            _profileStore.MaxScrollbackSize);
+
+        Console.WriteLine($"[{_clientId[..8]}] Created session for switch: {session.Name} ({session.Id[..8]})");
+
+        // 3. 부모 클라이언트를 새 세션으로 전환
+        var switched = await parentHandler.SwitchToSession(session);
+        if (!switched)
+        {
+            await SendAsync(new ErrorMessage { Message = "Failed to switch parent client to new session." }, ct);
+            return;
+        }
+
+        Console.WriteLine($"[{_clientId[..8]}] Switched parent client to session: {session.Name}");
+
+        // 4. 요청한 클라이언트(내부)에게 성공 응답
+        var resultMsg = $"Switched to new session: {session.Name}";
+        if (warning != null) resultMsg += $" ({warning})";
+        await SendAsync(new ProfileOkMessage { Message = resultMsg }, ct);
+    }
+
+    /// <summary>
+    /// 다른 클라이언트의 요청에 의해 이 클라이언트의 세션을 전환
+    /// </summary>
+    public async Task<bool> SwitchToSession(Session newSession)
+    {
+        // 기존 세션에서 detach
+        if (_attachedSession != null)
+        {
+            _attachedSession.OutputReceived -= OnSessionOutput;
+            _attachedSession.SessionEnded -= OnSessionEndedWhileAttached;
+            _attachedSession.WindowEnded -= OnWindowEndedWhileAttached;
+            _attachedSession.ActiveWindowChanged -= OnActiveWindowChanged;
+            _attachedSession.Detach(_clientId);
+        }
+
+        // 새 세션에 attach
+        if (!newSession.Attach(_clientId, _terminalCols, _terminalRows, true))
+        {
+            return false;
+        }
+
+        _attachedSession = newSession;
+
+        // 이벤트 구독 (race condition 방지를 위해 버퍼링 모드)
+        _isAttaching = true;
+
+        newSession.OutputReceived += OnSessionOutput;
+        newSession.SessionEnded += OnSessionEndedWhileAttached;
+        newSession.WindowEnded += OnWindowEndedWhileAttached;
+        newSession.ActiveWindowChanged += OnActiveWindowChanged;
+
+        var scrollback = newSession.GetScrollbackBuffer();
+
+        // 부모 클라이언트에게 세션 전환 알림
+        await SendAsync(new SwitchSessionMessage
+        {
+            Session = newSession.ToInfo(),
+            ScrollbackBuffer = scrollback.Length > 0 ? scrollback : null
+        }, CancellationToken.None);
+
+        // 버퍼링 모드 종료 및 큐잉된 출력 전송
+        _isAttaching = false;
+        while (_attachingOutput.TryDequeue(out var bufferedData))
+        {
+            await SendAsync(new OutputMessage { Data = bufferedData }, CancellationToken.None);
+        }
+
+        return true;
     }
 
     private async void OnWindowEndedWhileAttached(int windowIndex, int exitCode)

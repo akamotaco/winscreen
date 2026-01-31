@@ -55,7 +55,9 @@ public enum ClientMessageType
     /// <summary>윈도우 이름 변경</summary>
     RenameWindow,
     /// <summary>세션 이름 변경</summary>
-    RenameSession
+    RenameSession,
+    /// <summary>세션 전환 요청 (세션 내부에서 새 세션 생성/전환 시)</summary>
+    RequestSessionSwitch
 }
 
 /// <summary>
@@ -98,7 +100,9 @@ public enum ServerMessageType
     /// <summary>윈도우 이름 변경됨</summary>
     WindowRenamed,
     /// <summary>세션 이름 변경됨</summary>
-    SessionRenamed
+    SessionRenamed,
+    /// <summary>세션 전환됨 (다른 클라이언트 요청에 의한 세션 전환)</summary>
+    SwitchSession
 }
 
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "$type")]
@@ -125,6 +129,7 @@ public enum ServerMessageType
 [JsonDerivedType(typeof(ListWindowsMessage), "listWindows")]
 [JsonDerivedType(typeof(RenameWindowMessage), "renameWindow")]
 [JsonDerivedType(typeof(RenameSessionMessage), "renameSession")]
+[JsonDerivedType(typeof(RequestSessionSwitchMessage), "requestSessionSwitch")]
 public abstract class ClientMessage
 {
     public abstract ClientMessageType Type { get; }
@@ -284,6 +289,23 @@ public class RenameSessionMessage : ClientMessage
     public required string NewName { get; set; }
 }
 
+/// <summary>
+/// 세션 내부에서 새 세션 생성/전환 요청
+/// 서버가 부모 클라이언트의 세션을 전환함
+/// </summary>
+public class RequestSessionSwitchMessage : ClientMessage
+{
+    public override ClientMessageType Type => ClientMessageType.RequestSessionSwitch;
+    /// <summary>현재 세션 ID (WINSCREEN 환경변수에서 추출, 8자리)</summary>
+    public required string ParentSessionId { get; set; }
+    public string? SessionName { get; set; }
+    public string? ProfileName { get; set; }
+    public string? WorkingDirectory { get; set; }
+    public short Rows { get; set; } = 24;
+    public short Cols { get; set; } = 80;
+    public string? ClientExecutablePath { get; set; }
+}
+
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "$type")]
 [JsonDerivedType(typeof(SessionListMessage), "sessionList")]
 [JsonDerivedType(typeof(SessionCreatedMessage), "created")]
@@ -302,6 +324,7 @@ public class RenameSessionMessage : ClientMessage
 [JsonDerivedType(typeof(WindowListMessage), "windowList")]
 [JsonDerivedType(typeof(WindowRenamedMessage), "windowRenamed")]
 [JsonDerivedType(typeof(SessionRenamedMessage), "sessionRenamed")]
+[JsonDerivedType(typeof(SwitchSessionMessage), "switchSession")]
 public abstract class ServerMessage
 {
     public abstract ServerMessageType Type { get; }
@@ -423,6 +446,17 @@ public class SessionRenamedMessage : ServerMessage
 {
     public override ServerMessageType Type => ServerMessageType.SessionRenamed;
     public required string NewName { get; set; }
+}
+
+/// <summary>
+/// 세션 전환 알림 (부모 클라이언트에게 전송)
+/// </summary>
+public class SwitchSessionMessage : ServerMessage
+{
+    public override ServerMessageType Type => ServerMessageType.SwitchSession;
+    public required SessionInfo Session { get; set; }
+    /// <summary>새 세션의 스크롤백 버퍼</summary>
+    public byte[]? ScrollbackBuffer { get; set; }
 }
 
 /// <summary>
