@@ -32,6 +32,7 @@ WinScreen은 Linux의 `screen` 명령어와 유사한 UX를 Windows에서 제공
 ## 특징
 
 - **screen 스타일 UX**: `-r`로 세션 선택, `Ctrl+A, D`로 detach
+- **세션 전환**: 세션 내에서 다른 세션으로 전환 또는 새 세션 생성+전환 지원
 - **멀티 윈도우**: 한 세션 내에서 여러 독립적인 터미널 윈도우 지원 (`Ctrl+A, C`로 생성, `Ctrl+A, N/P`로 전환)
 - **Detached 모드**: `-d -m`으로 백그라운드 세션 생성, 명령어 실행 지원
 - **GNU Screen 호환 축약형**: `-dmS name`, `-dmp profile` 등 축약형 옵션 지원
@@ -129,9 +130,11 @@ screen -p conda
 # 세션 목록 보기
 screen -ls
 
-# 세션에 연결 (이름 또는 ID)
+# 세션에 연결 (이름, ID, 또는 부분 매칭)
 screen -r mywork
 screen -r abc12345
+screen -r abc1        # ID 프리픽스 매칭 (유일하면 연결)
+screen -r myw         # 이름 프리픽스 매칭 (유일하면 연결)
 
 # detached 세션이 하나면 자동 연결
 screen -r
@@ -183,6 +186,8 @@ screen --server-stop
 | `-r` | 에러 | 자동 연결 | 에러 (이미 연결됨) |
 | `-R` | 새로 생성 | 자동 연결 | 에러 (이미 연결됨) |
 | `-d -r` | 에러 | 자동 연결 | 강제 재연결 (기존 클라이언트 분리) |
+
+> **세션 식별자 매칭**: `-r`, `-d -r`, `-X kill` 등에서 세션을 지정할 때 전체 ID, ID 프리픽스, 이름, 이름 프리픽스로 매칭합니다. 프리픽스가 유일하게 하나의 세션과 매칭되면 자동 연결됩니다.
 
 ### 키 바인딩 (세션 연결 중)
 
@@ -242,6 +247,33 @@ screen -dmS api python api_server.py
 screen -dmS db docker compose up
 screen -ls           # 모든 세션 확인
 ```
+
+### 세션 내 세션 전환
+
+세션 안에서 다른 세션으로 전환하거나 새 세션을 만들면서 전환할 수 있습니다.
+ConPTY 구조상 GNU Screen 방식의 nested session은 지원되지 않으며, 대신 세션 전환 방식을 사용합니다.
+
+```batch
+# 세션 안에서 새 세션 생성 + 전환
+screen
+screen -S newwork
+
+# 세션 안에서 기존 세션으로 전환 (이름, ID, 부분 매칭)
+screen -r mywork
+screen -r abc12345
+screen -r abc1        # ID 프리픽스 매칭
+
+# detached 세션이 하나면 자동 전환
+screen -r
+
+# 다른 클라이언트가 연결 중인 세션으로 강제 전환
+screen -d -r mywork
+
+# 백그라운드 세션 생성 (전환 없이)
+screen -d -m -S daemon
+```
+
+> **Note**: 세션 전환 시 기존 세션은 detach 상태가 되며, 나중에 다시 `screen -r`로 돌아올 수 있습니다.
 
 ### 멀티 윈도우 워크플로우
 
@@ -396,20 +428,23 @@ screen --profile-reset
 | 윈도우 인덱스 재사용 | ✅ | ✅ |
 | 윈도우 이름 변경 | ✅ | ✅ |
 | 세션 이름 변경 | ✅ | ✅ |
+| 세션 내 세션 전환 | ❌ | ✅ |
 
 ### 명령어 호환성
 
 | 명령 | GNU Screen | WinScreen | 비고 |
 |------|:----------:|:---------:|------|
 | `-S name` | ✅ | ✅ | 세션 이름 지정 |
-| `-r` | ✅ | ✅ | 재연결 |
+| `-r` | ✅ | ✅ | 재연결 (ID/이름 프리픽스 매칭 지원) |
 | `-R` | ✅ | ✅ | 연결 또는 생성 |
 | `-d -r` | ✅ | ✅ | 강제 재연결 |
 | `-d -m` | ✅ | ✅ | detached 모드로 세션 생성 |
 | `-ls` | ✅ | ✅ | 세션 목록 |
 | `-X kill` | ✅ | ✅ | 세션 종료 |
 | `-X kill-all` | ❌ | ✅ | WinScreen 전용 |
-| `-m` | ✅ | ⚠️ | GNU: nested 세션, WinScreen: 세션 전환 (기존 세션 detach 후 새 세션 생성) |
+| `-m` | ✅ | ⚠️ | GNU: nested 세션, WinScreen: 미지원 (대신 세션 전환 사용) |
+| 세션 내 `-r` | ❌ | ✅ | 세션 내에서 기존 세션으로 전환 |
+| 세션 내 생성+전환 | ❌ | ✅ | 세션 내에서 새 세션 생성 후 즉시 전환 |
 
 ### 키 바인딩 호환성 (Ctrl+A 후)
 
@@ -442,6 +477,8 @@ screen --profile-reset
 | 기능 | 설명 |
 |------|------|
 | 프로필 시스템 | CMD, PowerShell, Conda, WSL 등 쉘 프리셋 |
+| 세션 내 세션 전환 | 세션 안에서 `screen -r`로 기존 세션 전환, `screen`으로 새 세션 생성+전환 |
+| 세션 프리픽스 매칭 | ID/이름의 앞부분만으로 세션 식별 (`screen -r abc1`) |
 | 자동 서버 시작 | 클라이언트 실행 시 서버 자동 시작 |
 | 자동 윈도우 리사이즈 | 윈도우 전환 시 현재 터미널 크기에 맞게 자동 리사이즈 |
 | `--server-*` 명령 | 서버 상태 확인 및 관리 |
@@ -467,9 +504,10 @@ screen --profile-reset
 - **서버 종료 시 세션 손실**: WinScreen 서버가 종료되면 모든 세션이 함께 종료됩니다
   - 중요한 작업은 정기적으로 저장하세요
   - `screen --server-stop` 전에 세션을 확인하세요
-- **세션 내 screen 실행**: 세션 안에서 `screen`을 실행하면 기존 세션을 detach하고 새 세션으로 전환됩니다
-  - ConPTY 구조상 GNU Screen 방식의 nested session은 지원되지 않습니다
-  - 세션 내에서 `screen -X kill-all`, `screen --server-stop` 등 위험한 명령은 차단됩니다
+- **세션 내 screen 실행**: ConPTY 구조상 GNU Screen 방식의 nested session은 지원되지 않습니다
+  - 대신 세션 전환 방식을 사용합니다: `screen`으로 새 세션 생성+전환, `screen -r`로 기존 세션 전환
+  - 전환 시 기존 세션은 detach되며 나중에 `screen -r`로 돌아올 수 있습니다
+  - `screen -X kill-all`, `screen --server-stop` 등 위험한 명령은 차단됩니다
   - `screen -ls`, `screen --profiles`, `screen --set-default` 등 조회/프로필 관리 명령은 허용됩니다
   - `screen -d -m` 백그라운드 세션 생성도 허용됩니다
 - **세션 이름 중복**: 같은 이름의 세션을 생성하면 경고가 표시됩니다

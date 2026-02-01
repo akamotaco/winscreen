@@ -577,6 +577,38 @@ public class SessionManager : IDisposable
             s.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
+    /// ID 프리픽스, 이름, 전체 ID 순으로 세션 검색 (GNU screen 호환)
+    /// </summary>
+    public Session? Find(string query)
+    {
+        // 1. 전체 ID 정확 매칭
+        if (_sessions.TryGetValue(query, out var exact))
+            return exact;
+
+        // 2. ID 프리픽스 매칭
+        var prefixMatches = _sessions.Values
+            .Where(s => s.Id.StartsWith(query, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        if (prefixMatches.Count == 1)
+            return prefixMatches[0];
+
+        // 3. 이름 정확 매칭
+        var nameMatch = _sessions.Values.FirstOrDefault(s =>
+            s.Name.Equals(query, StringComparison.OrdinalIgnoreCase));
+        if (nameMatch != null)
+            return nameMatch;
+
+        // 4. 이름 부분 매칭 (프리픽스)
+        var namePrefixMatches = _sessions.Values
+            .Where(s => s.Name.StartsWith(query, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        if (namePrefixMatches.Count == 1)
+            return namePrefixMatches[0];
+
+        return null;
+    }
+
+    /// <summary>
     /// 지정한 이름을 가진 세션이 존재하는지 확인
     /// </summary>
     public bool ExistsByName(string name) =>

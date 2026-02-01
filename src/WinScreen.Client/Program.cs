@@ -58,7 +58,7 @@ class ScreenClient
             // 세션 생성/연결 명령은 부모 클라이언트의 세션을 전환하는 방식으로 처리
             var switchCommands = new[]
             {
-                Command.Create, Command.AttachOrCreate
+                Command.Create, Command.AttachOrCreate, Command.Attach
             };
 
             if (switchCommands.Contains(parsed.Command))
@@ -83,9 +83,13 @@ class ScreenClient
                 Console.Error.WriteLine("Warning: Already inside a WinScreen session.");
                 Console.Error.WriteLine($"  Current session: {winscreenEnv}");
                 Console.Error.WriteLine();
-                Console.Error.WriteLine("  screen -ls        List all sessions");
-                Console.Error.WriteLine("  screen -d -m      Create background session");
-                Console.Error.WriteLine("  Ctrl+A, D         Detach from current session");
+                Console.Error.WriteLine("  screen              Create new session and switch");
+                Console.Error.WriteLine("  screen -S <name>    Create named session and switch");
+                Console.Error.WriteLine("  screen -r [id]      Switch to existing session");
+                Console.Error.WriteLine("  screen -d -r <id>   Force switch (detach other client)");
+                Console.Error.WriteLine("  screen -ls          List all sessions");
+                Console.Error.WriteLine("  screen -d -m        Create background session");
+                Console.Error.WriteLine("  Ctrl+A, D           Detach from current session");
                 return 1;
             }
         }
@@ -726,7 +730,7 @@ class ScreenClient
     }
 
     /// <summary>
-    /// 세션 내부에서 새 세션 생성 요청 (부모 클라이언트의 세션을 전환)
+    /// 세션 내부에서 세션 전환 요청 (새 세션 생성 또는 기존 세션으로 전환)
     /// </summary>
     private async Task<int> RequestSessionSwitch(ParsedArgs args, string winscreenEnv)
     {
@@ -737,6 +741,12 @@ class ScreenClient
 
             await EnsureServerRunning();
 
+            // screen -r (ID 미지정): 세션 목록 조회 후 자동 선택
+            if (args.Command == Command.Attach && string.IsNullOrEmpty(args.SessionId))
+            {
+                return await RequestSessionSwitchAutoSelect(parentSessionId, args.ForceDetach);
+            }
+
             var msg = new RequestSessionSwitchMessage
             {
                 ParentSessionId = parentSessionId,
@@ -745,31 +755,106 @@ class ScreenClient
                 WorkingDirectory = args.WorkingDirectory ?? Environment.CurrentDirectory,
                 Cols = (short)Console.WindowWidth,
                 Rows = (short)Console.WindowHeight,
-                ClientExecutablePath = AppDomain.CurrentDomain.BaseDirectory
+                ClientExecutablePath = AppDomain.CurrentDomain.BaseDirectory,
+                TargetSessionId = args.SessionId,
+                ForceDetach = args.ForceDetach
             };
 
-            await ProtocolSerializer.SendAsync(_pipe!, msg, _cts.Token);
-            var response = await ProtocolSerializer.DeserializeAsync<ServerMessage>(_pipe!, _cts.Token);
-
-            if (response is ProfileOkMessage ok)
-            {
-                Console.WriteLine(ok.Message);
-                return 0;
-            }
-
-            if (response is ErrorMessage error)
-            {
-                Console.Error.WriteLine($"Error: {error.Message}");
-                return 1;
-            }
-
-            return 1;
+            return await SendSessionSwitchRequest(msg);
         }
         catch (Exception ex)
         {
             Console.Error.WriteLine($"Error: {ex.Message}");
             return 1;
         }
+    }
+
+    /// <summary>
+    /// screen -r (ID 미지정) 세션 내부 실행: 세션 목록 조회 후 자동 선택하여 전환
+    /// </summary>
+    private async Task<int> RequestSessionSwitchAutoSelect(string parentSessionId, bool forceDetach)
+    {
+        // 세션 목록 조회
+        await ProtocolSerializer.SendAsync(_pipe!, new ListSessionsMessage(), _cts.Token);
+        var response = await ProtocolSerializer.DeserializeAsync<ServerMessage>(_pipe!, _cts.Token);
+
+        if (response is not SessionListMessage list)
+        {
+            if (response is ErrorMessage err)
+                Console.Error.WriteLine($"Error: {err.Message}");
+            return 1;
+        }
+
+        // 현재 세션 제외, detached 세션만 (forceDetach면 attached 포함)
+        var candidates = forceDetach
+            ? list.Sessions.Where(s => !s.Id.StartsWith(parentSessionId, StringComparison.OrdinalIgnoreCase)).ToList()
+            : list.Sessions.Where(s => !s.IsAttached && !s.Id.StartsWith(parentSessionId, StringComparison.OrdinalIgnoreCase)).ToList();
+
+        if (candidates.Count == 0)
+        {
+            Console.WriteLine("No other sessions to switch to.");
+            if (!forceDetach)
+            {
+                var attached = list.Sessions.Where(s => s.IsAttached && !s.Id.StartsWith(parentSessionId, StringComparison.OrdinalIgnoreCase)).ToList();
+                if (attached.Count > 0)
+                {
+                    Console.WriteLine("There are attached sessions. Use 'screen -d -r' to force switch.");
+                }
+            }
+            return 1;
+        }
+
+        if (candidates.Count == 1)
+        {
+            var target = candidates[0];
+            Console.WriteLine($"Switching to session: {target.Name}");
+
+            return await SendSessionSwitchRequest(new RequestSessionSwitchMessage
+            {
+                ParentSessionId = parentSessionId,
+                TargetSessionId = target.Id,
+                ForceDetach = forceDetach,
+                Cols = (short)Console.WindowWidth,
+                Rows = (short)Console.WindowHeight
+            });
+        }
+
+        // 여러 개: 목록 표시
+        Console.WriteLine("Multiple sessions available. Please specify one:");
+        Console.WriteLine($"{"ID",-12} {"Name",-20} {"Created",-20} {"Status",-10}");
+        Console.WriteLine(new string('-', 64));
+
+        foreach (var session in candidates)
+        {
+            var status = session.IsAttached ? "Attached" : "Detached";
+            Console.WriteLine($"{session.Id[..8],-12} {session.Name,-20} {session.CreatedAt:yyyy-MM-dd HH:mm,-20} {status,-10}");
+        }
+
+        Console.WriteLine("\nUse: screen -r <session-id or name>");
+        return 0;
+    }
+
+    /// <summary>
+    /// RequestSessionSwitchMessage 전송 및 응답 처리
+    /// </summary>
+    private async Task<int> SendSessionSwitchRequest(RequestSessionSwitchMessage msg)
+    {
+        await ProtocolSerializer.SendAsync(_pipe!, msg, _cts.Token);
+        var response = await ProtocolSerializer.DeserializeAsync<ServerMessage>(_pipe!, _cts.Token);
+
+        if (response is ProfileOkMessage ok)
+        {
+            Console.WriteLine(ok.Message);
+            return 0;
+        }
+
+        if (response is ErrorMessage error)
+        {
+            Console.Error.WriteLine($"Error: {error.Message}");
+            return 1;
+        }
+
+        return 1;
     }
 
     private async Task<int> AttachOrCreate(ParsedArgs args)
@@ -1826,6 +1911,12 @@ Examples:
                 result.Command = Command.Attach;
             }
             result.SessionId = positionalArgs[0];
+        }
+
+        // 명시적 명령이 없고 위치 인자도 없으면 새 세션 생성
+        if (result.Command == Command.None)
+        {
+            result.Command = Command.Create;
         }
 
         // -d 플래그 처리: -r과 함께 사용되지 않으면 원격 분리 명령

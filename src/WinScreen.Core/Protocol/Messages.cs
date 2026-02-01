@@ -304,6 +304,10 @@ public class RequestSessionSwitchMessage : ClientMessage
     public short Rows { get; set; } = 24;
     public short Cols { get; set; } = 80;
     public string? ClientExecutablePath { get; set; }
+    /// <summary>전환할 기존 세션 ID 또는 이름 (null이면 새 세션 생성)</summary>
+    public string? TargetSessionId { get; set; }
+    /// <summary>강제 분리 여부 (-d -r 조합)</summary>
+    public bool ForceDetach { get; set; }
 }
 
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "$type")]

@@ -397,9 +397,8 @@ class ClientHandler
             _attachedSession.Detach(_clientId);
         }
 
-        var session = _sessionManager.Get(msg.SessionId) 
-                      ?? _sessionManager.GetByName(msg.SessionId);
-        
+        var session = _sessionManager.Find(msg.SessionId);
+
         if (session == null)
         {
             await SendAsync(new ErrorMessage { Message = $"Session not found: {msg.SessionId}" }, ct);
@@ -485,9 +484,8 @@ class ClientHandler
 
     private async Task HandleKillSession(KillSessionMessage msg, CancellationToken ct)
     {
-        var session = _sessionManager.Get(msg.SessionId) 
-                      ?? _sessionManager.GetByName(msg.SessionId);
-        
+        var session = _sessionManager.Find(msg.SessionId);
+
         if (session == null)
         {
             await SendAsync(new ErrorMessage { Message = $"Session not found: {msg.SessionId}" }, ct);
@@ -828,6 +826,13 @@ class ClientHandler
             return;
         }
 
+        // 기존 세션으로 전환 (TargetSessionId가 지정된 경우)
+        if (!string.IsNullOrEmpty(msg.TargetSessionId))
+        {
+            await HandleSwitchToExistingSession(msg, parentHandler, ct);
+            return;
+        }
+
         // 2. 새 세션 생성 (HandleCreateSession과 동일한 로직)
         var profile = _profileStore.GetOrDefault(msg.ProfileName);
         var workingDir = msg.WorkingDirectory ?? profile.WorkingDirectory ?? Environment.CurrentDirectory;
@@ -885,9 +890,52 @@ class ClientHandler
     }
 
     /// <summary>
+    /// 기존 세션으로 전환 처리 (screen -r session-id 세션 내부 실행)
+    /// </summary>
+    private async Task HandleSwitchToExistingSession(RequestSessionSwitchMessage msg, ClientHandler parentHandler, CancellationToken ct)
+    {
+        var targetSession = _sessionManager.Find(msg.TargetSessionId!);
+
+        if (targetSession == null)
+        {
+            await SendAsync(new ErrorMessage { Message = $"Session not found: {msg.TargetSessionId}" }, ct);
+            return;
+        }
+
+        // 자기 자신 세션으로 전환 방지
+        if (parentHandler.AttachedSessionId == targetSession.Id)
+        {
+            await SendAsync(new ErrorMessage { Message = $"Already attached to session: {targetSession.Name}" }, ct);
+            return;
+        }
+
+        // 대상 세션이 다른 클라이언트에 연결되어 있고 ForceDetach가 아니면 에러
+        if (targetSession.IsAttached && !msg.ForceDetach)
+        {
+            await SendAsync(new ErrorMessage
+            {
+                Message = $"Session '{targetSession.Name}' is already attached by another client.\nUse 'screen -d -r {targetSession.Name}' to force switch."
+            }, ct);
+            return;
+        }
+
+        Console.WriteLine($"[{_clientId[..8]}] Switching parent to existing session: {targetSession.Name} ({targetSession.Id[..8]})");
+
+        var switched = await parentHandler.SwitchToSession(targetSession, msg.ForceDetach);
+        if (!switched)
+        {
+            await SendAsync(new ErrorMessage { Message = $"Failed to switch to session: {targetSession.Name}" }, ct);
+            return;
+        }
+
+        Console.WriteLine($"[{_clientId[..8]}] Switched parent client to session: {targetSession.Name}");
+        await SendAsync(new ProfileOkMessage { Message = $"Switched to session: {targetSession.Name}" }, ct);
+    }
+
+    /// <summary>
     /// 다른 클라이언트의 요청에 의해 이 클라이언트의 세션을 전환
     /// </summary>
-    public async Task<bool> SwitchToSession(Session newSession)
+    public async Task<bool> SwitchToSession(Session newSession, bool forceDetach = true)
     {
         // 기존 세션에서 detach
         if (_attachedSession != null)
@@ -900,7 +948,7 @@ class ClientHandler
         }
 
         // 새 세션에 attach
-        if (!newSession.Attach(_clientId, _terminalCols, _terminalRows, true))
+        if (!newSession.Attach(_clientId, _terminalCols, _terminalRows, forceDetach))
         {
             return false;
         }
