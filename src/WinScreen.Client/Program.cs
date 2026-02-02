@@ -1167,6 +1167,10 @@ class ScreenClient
 
                     var keyInfo = Console.ReadKey(intercept: true);
 
+                    // TODO: 콘솔 스크롤백이 위로 올라가 있으면 하단으로 복귀
+                    // 현재 세션 시작 시 스크롤백 출력 직후 의도치 않은 스크롤 발생 문제로 비활성화
+                    // ScrollToBottom();
+
                     // Ctrl+A 감지
                     if (keyInfo.Key == ConsoleKey.A && keyInfo.Modifiers == ConsoleModifiers.Control)
                     {
@@ -1673,14 +1677,73 @@ Examples:
         SetConsoleMode(outputHandle, _originalOutputMode);
     }
 
+    /// <summary>
+    /// 콘솔 스크롤백 뷰포트가 버퍼 하단에 있지 않으면 하단으로 스크롤.
+    /// 사용자가 마우스 휠/스크롤바로 위로 스크롤한 후 타이핑할 때 호출.
+    /// </summary>
+    private static void ScrollToBottom()
+    {
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) return;
+
+        var handle = GetStdHandle(-11); // STD_OUTPUT_HANDLE
+        if (!GetConsoleScreenBufferInfo(handle, out var info)) return;
+
+        var windowHeight = info.srWindow.Bottom - info.srWindow.Top;
+        var bufferBottom = (short)(info.dwSize.Y - 1);
+
+        // 뷰포트가 이미 하단이면 아무 작업 없음
+        if (info.srWindow.Bottom >= bufferBottom) return;
+
+        var rect = new SMALL_RECT
+        {
+            Left = info.srWindow.Left,
+            Top = (short)(bufferBottom - windowHeight),
+            Right = info.srWindow.Right,
+            Bottom = bufferBottom
+        };
+        SetConsoleWindowInfo(handle, true, ref rect);
+    }
+
     [DllImport("kernel32.dll")]
     private static extern IntPtr GetStdHandle(int nStdHandle);
-    
+
     [DllImport("kernel32.dll")]
     private static extern bool GetConsoleMode(IntPtr hConsoleHandle, out uint lpMode);
-    
+
     [DllImport("kernel32.dll")]
     private static extern bool SetConsoleMode(IntPtr hConsoleHandle, uint dwMode);
+
+    [DllImport("kernel32.dll")]
+    private static extern bool GetConsoleScreenBufferInfo(IntPtr hConsoleOutput, out CONSOLE_SCREEN_BUFFER_INFO lpConsoleScreenBufferInfo);
+
+    [DllImport("kernel32.dll")]
+    private static extern bool SetConsoleWindowInfo(IntPtr hConsoleOutput, bool bAbsolute, ref SMALL_RECT lpConsoleWindow);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct COORD
+    {
+        public short X;
+        public short Y;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct SMALL_RECT
+    {
+        public short Left;
+        public short Top;
+        public short Right;
+        public short Bottom;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct CONSOLE_SCREEN_BUFFER_INFO
+    {
+        public COORD dwSize;
+        public COORD dwCursorPosition;
+        public ushort wAttributes;
+        public SMALL_RECT srWindow;
+        public COORD dwMaximumWindowSize;
+    }
 
     private static ParsedArgs ParseArgs(string[] args)
     {
