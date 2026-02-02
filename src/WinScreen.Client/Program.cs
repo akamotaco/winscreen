@@ -1687,6 +1687,29 @@ Examples:
         var result = new ParsedArgs();
         var positionalArgs = new List<string>();
 
+        // 값이 필수인 옵션의 다음 인자 존재 여부 검증
+        static void RequireValue(List<string> args, int currentIdx, string optionName)
+        {
+            if (currentIdx + 1 >= args.Count || args[currentIdx + 1].StartsWith("-"))
+            {
+                Console.Error.WriteLine($"Error: {optionName} requires a value");
+                Console.Error.WriteLine("Use 'screen --help' for usage information.");
+                Environment.Exit(1);
+            }
+        }
+
+        // 명령 충돌 감지 (이미 다른 명령이 설정된 경우 에러)
+        void SetCommand(Command cmd, string optionName)
+        {
+            if (result.Command != Command.None)
+            {
+                Console.Error.WriteLine($"Error: Conflicting options. Cannot use '{optionName}' with previous command.");
+                Console.Error.WriteLine("Use 'screen --help' for usage information.");
+                Environment.Exit(1);
+            }
+            result.Command = cmd;
+        }
+
         // 연결된 짧은 옵션 확장 (예: -dmS -> -d -m -S)
         // GNU screen 호환: 값이 필요한 옵션(S, p)은 마지막에 와야 함
         var expandedArgs = new List<string>();
@@ -1741,7 +1764,7 @@ Examples:
             // 대소문자 구분이 필요한 옵션 먼저 처리
             if (arg == "-R")
             {
-                result.Command = Command.AttachOrCreate;
+                SetCommand(Command.AttachOrCreate, "-R");
                 if (i + 1 < expandedArgs.Count && !expandedArgs[i + 1].StartsWith("-"))
                     result.SessionId = expandedArgs[++i];
                 continue;
@@ -1752,24 +1775,26 @@ Examples:
                 case "-ls":
                 case "-list":
                 case "--list":
-                    result.Command = Command.List;
+                    SetCommand(Command.List, "-ls");
                     break;
                     
                 case "-r":
                 case "-resume":
                 case "--resume":
-                    result.Command = Command.Attach;
+                    SetCommand(Command.Attach, "-r");
                     if (i + 1 < expandedArgs.Count && !expandedArgs[i + 1].StartsWith("-"))
                         result.SessionId = expandedArgs[++i];
                     break;
                     
                 case "-s":
-                    if (i + 1 < expandedArgs.Count) result.SessionName = expandedArgs[++i];
+                    RequireValue(expandedArgs, i, "-S");
+                    result.SessionName = expandedArgs[++i];
                     break;
                     
                 case "-p":
                 case "--profile":
-                    if (i + 1 < expandedArgs.Count) result.Profile = expandedArgs[++i];
+                    RequireValue(expandedArgs, i, "-p/--profile");
+                    result.Profile = expandedArgs[++i];
                     break;
                     
                 case "-d":
@@ -1780,20 +1805,29 @@ Examples:
                     break;
                     
                 case "-x":
-                    if (i + 1 < expandedArgs.Count)
+                    if (i + 1 >= expandedArgs.Count)
                     {
-                        var subCmd = expandedArgs[i + 1].ToLowerInvariant();
-                        if (subCmd == "kill")
-                        {
-                            i++;
-                            result.Command = Command.Kill;
-                            if (i + 1 < expandedArgs.Count) result.SessionId = expandedArgs[++i];
-                        }
-                        else if (subCmd == "kill-all")
-                        {
-                            i++;
-                            result.Command = Command.KillAll;
-                        }
+                        Console.Error.WriteLine("Error: -X requires a command (kill, kill-all)");
+                        Console.Error.WriteLine("Usage: screen -X kill <session>, screen -X kill-all");
+                        Environment.Exit(1);
+                    }
+                    i++;
+                    var subCmd = expandedArgs[i].ToLowerInvariant();
+                    if (subCmd == "kill")
+                    {
+                        SetCommand(Command.Kill, "-X kill");
+                        if (i + 1 < expandedArgs.Count && !expandedArgs[i + 1].StartsWith("-"))
+                            result.SessionId = expandedArgs[++i];
+                    }
+                    else if (subCmd == "kill-all")
+                    {
+                        SetCommand(Command.KillAll, "-X kill-all");
+                    }
+                    else
+                    {
+                        Console.Error.WriteLine($"Error: Unknown -X command '{expandedArgs[i]}'");
+                        Console.Error.WriteLine("Available: kill <session>, kill-all");
+                        Environment.Exit(1);
                     }
                     break;
 
@@ -1802,78 +1836,82 @@ Examples:
                     break;
 
                 case "--profiles":
-                    result.Command = Command.ListProfiles;
+                    SetCommand(Command.ListProfiles, "--profiles");
                     break;
 
                 case "--server":
                 case "--server-status":
-                    result.Command = Command.ServerStatus;
+                    SetCommand(Command.ServerStatus, "--server");
                     break;
 
                 case "--server-stop":
                 case "--quit":
-                    result.Command = Command.ServerStop;
+                    SetCommand(Command.ServerStop, "--server-stop");
                     break;
 
                 case "--server-start":
-                    result.Command = Command.ServerStart;
+                    SetCommand(Command.ServerStart, "--server-start");
                     break;
 
                 case "--profile-add":
-                    result.Command = Command.ProfileAdd;
-                    if (i + 1 < expandedArgs.Count && !expandedArgs[i + 1].StartsWith("-"))
-                        result.ProfileName = expandedArgs[++i];
+                    SetCommand(Command.ProfileAdd, "--profile-add");
+                    RequireValue(expandedArgs, i, "--profile-add");
+                    result.ProfileName = expandedArgs[++i];
                     break;
 
                 case "--profile-remove":
                 case "--profile-delete":
-                    result.Command = Command.ProfileRemove;
-                    if (i + 1 < expandedArgs.Count && !expandedArgs[i + 1].StartsWith("-"))
-                        result.ProfileName = expandedArgs[++i];
+                    SetCommand(Command.ProfileRemove, "--profile-remove");
+                    RequireValue(expandedArgs, i, "--profile-remove");
+                    result.ProfileName = expandedArgs[++i];
                     break;
 
                 case "--profile-show":
-                    result.Command = Command.ProfileShow;
-                    if (i + 1 < expandedArgs.Count && !expandedArgs[i + 1].StartsWith("-"))
-                        result.ProfileName = expandedArgs[++i];
+                    SetCommand(Command.ProfileShow, "--profile-show");
+                    RequireValue(expandedArgs, i, "--profile-show");
+                    result.ProfileName = expandedArgs[++i];
                     break;
 
                 case "--profile-reset":
-                    result.Command = Command.ProfileReset;
+                    SetCommand(Command.ProfileReset, "--profile-reset");
                     break;
 
                 case "--default":
                 case "--get-default":
-                    result.Command = Command.GetDefault;
+                    SetCommand(Command.GetDefault, "--default");
                     break;
 
                 case "--set-default":
-                    result.Command = Command.SetDefault;
-                    if (i + 1 < expandedArgs.Count && !expandedArgs[i + 1].StartsWith("-"))
-                        result.ProfileName = expandedArgs[++i];
+                    SetCommand(Command.SetDefault, "--set-default");
+                    RequireValue(expandedArgs, i, "--set-default");
+                    result.ProfileName = expandedArgs[++i];
                     break;
 
                 case "--shell":
-                    if (i + 1 < expandedArgs.Count) result.ProfileShell = expandedArgs[++i];
+                    RequireValue(expandedArgs, i, "--shell");
+                    result.ProfileShell = expandedArgs[++i];
                     break;
 
                 case "--args":
-                    if (i + 1 < expandedArgs.Count) result.ProfileArgs = expandedArgs[++i];
+                    RequireValue(expandedArgs, i, "--args");
+                    result.ProfileArgs = expandedArgs[++i];
                     break;
 
                 case "--startup":
-                    if (i + 1 < expandedArgs.Count) result.ProfileStartup = expandedArgs[++i];
+                    RequireValue(expandedArgs, i, "--startup");
+                    result.ProfileStartup = expandedArgs[++i];
                     break;
 
                 case "--desc":
                 case "--description":
-                    if (i + 1 < expandedArgs.Count) result.ProfileDescription = expandedArgs[++i];
+                    RequireValue(expandedArgs, i, "--desc");
+                    result.ProfileDescription = expandedArgs[++i];
                     break;
 
                 case "-h":
                 case "--help":
                 case "/?":
-                    result.Command = Command.Help;
+                    SetCommand(Command.Help, "--help");
                     break;
                     
                 default:
@@ -1906,10 +1944,14 @@ Examples:
         // 그 외: 첫 번째 위치 인자를 세션 ID로 처리
         if (positionalArgs.Count > 0)
         {
-            if (result.Command == Command.None)
+            // 명령이 positional args를 사용하지 않는 경우 에러
+            if (result.Command != Command.None)
             {
-                result.Command = Command.Attach;
+                Console.Error.WriteLine($"Error: Unexpected argument '{positionalArgs[0]}'");
+                Console.Error.WriteLine("Use 'screen --help' for usage information.");
+                Environment.Exit(1);
             }
+            result.Command = Command.Attach;
             result.SessionId = positionalArgs[0];
         }
 
@@ -1917,6 +1959,14 @@ Examples:
         if (result.Command == Command.None)
         {
             result.Command = Command.Create;
+        }
+
+        // -X kill은 세션 ID 필수
+        if (result.Command == Command.Kill && string.IsNullOrEmpty(result.SessionId))
+        {
+            Console.Error.WriteLine("Error: -X kill requires a session ID");
+            Console.Error.WriteLine("Usage: screen -X kill <session-id or name>");
+            Environment.Exit(1);
         }
 
         // -d 플래그 처리: -r과 함께 사용되지 않으면 원격 분리 명령
